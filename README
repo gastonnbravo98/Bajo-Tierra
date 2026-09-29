@@ -1,0 +1,9 @@
+Unidades utilizadas: 
+Unidad 1 (Mundos procedurales 2D/3D)
+Unidad 7 (Terreno destructible)
+
+1. Concepto
+El juego combina la generación de mapas infinitos/orgánicos (Unidad 1) con la física e interacción de un entorno completamente moldeable y destructible en tiempo real (Unidad 7). El mundo no es estático: la topografía generada algorítmicamente reacciona a explosiones, excavaciones y colisiones, modificando la navegación del jugador y las mecánicas de juego de forma dinámica. 
+2. Idea Principal
+El juego se enfoca 100% en sus mecánicas jugables. Cada vez que inicias una nueva partida (o ingresas un código de mapa), el subsuelo se genera automáticamente de forma totalmente única. Nunca jugarás en el mismo mapa dos veces. 
+Géneros de referencia: Motherload, SteamWorld Dig, Terraria 
