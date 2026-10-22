@@ -1,6 +1,7 @@
 import {
   CELL, COLS, ROWS, PLAYER_W, PLAYER_H,
   MOVE_SPEED, GRAVITY, JUMP_SPEED, MAX_FALL,
+  FUEL_MAX, FUEL_USE, FUEL_REGEN, THRUST, FLY_SPEED,
 } from './config.js';
 import { isSolid } from './world.js';
 
@@ -12,13 +13,15 @@ export function createPlayer(world) {
   const h = PLAYER_H * CELL;
   const col = Math.floor(COLS / 2);
   let row = 0;
-  while (row < ROWS && !isSolid(world, col, row)) row++; // bajar hasta la primera celda llena
+  while (row < ROWS && !isSolid(world, col, row)) row++;
   return {
     x: col * CELL + (CELL - w) / 2,
     y: row * CELL - h,
     w, h,
     vx: 0, vy: 0,
     onGround: false,
+    fuel: FUEL_MAX,
+    flying: false,
   };
 }
 
@@ -43,7 +46,6 @@ function moveX(world, p, dx) {
   for (let i = 0; i < n; i++) {
     p.x += step;
     if (collides(world, p.x, p.y, p.w, p.h)) {
-      // pegarlo al borde de la celda con la que chocó
       if (step > 0) p.x = Math.floor((p.x + p.w) / CELL) * CELL - p.w;
       else p.x = (Math.floor(p.x / CELL) + 1) * CELL;
       p.vx = 0;
@@ -85,7 +87,18 @@ export function updatePlayer(world, p, input, dt) {
   // gravedad, con límite de velocidad de caída
   p.vy = Math.min(p.vy + GRAVITY * CELL * dt, MAX_FALL * CELL);
 
+  // jetpack: manteniendo salto en el aire, con combustible, y sin pasar la velocidad máxima de subida
+  p.flying = false;
+  if (input.jump && !p.onGround && p.fuel > 0 && p.vy > -FLY_SPEED * CELL) {
+    p.vy = Math.max(p.vy - THRUST * CELL * dt, -FLY_SPEED * CELL);
+    p.fuel = Math.max(0, p.fuel - FUEL_USE * dt);
+    p.flying = true;
+  }
+
   moveX(world, p, p.vx * dt);
   p.onGround = false; // se vuelve a poner en true si moveY detecta piso
   moveY(world, p, p.vy * dt);
+
+  // en el suelo el combustible se recarga solo
+  if (p.onGround) p.fuel = Math.min(FUEL_MAX, p.fuel + FUEL_REGEN * dt);
 }

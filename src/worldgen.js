@@ -1,11 +1,12 @@
-import { COLS, ROWS, AIR, DIRT, STONE } from './config.js';
+import { COLS, ROWS, AIR, DIRT, STONE, GRANITE } from './config.js';
 import { mulberry32 } from './random.js';
 import { makeNoise1D } from './noise.js';
 import { generateCaves } from './caves.js';
+import { placeOres } from './ores.js';
 
 export function generateWorld(seed) {
   const noise = makeNoise1D(mulberry32(seed));
-  const caves = generateCaves(mulberry32(seed + 1)); // generador aparte para las cuevas
+  const blobs = generateCaves(mulberry32(seed + 1), 0.52); // autómata: manchas de granito
   const world = new Uint8Array(COLS * ROWS);
 
   for (let x = 0; x < COLS; x++) {
@@ -15,16 +16,18 @@ export function generateWorld(seed) {
     for (let y = 0; y < ROWS; y++) {
       const i = y * COLS + x;
       let type;
-      if (y < surface) type = AIR;
+      if (y < surface) type = AIR;              // aire solo arriba del suelo
       else if (y < surface + 8) type = DIRT;
       else type = STONE;
 
-      // tallar cuevas solo en la piedra, un poco por debajo de la tierra
-      if (type === STONE && y > surface + 10 && caves[i] === 0) {
-        type = AIR;
+      // las "cuevas" del autómata ahora se rellenan con granito, no con aire
+      if (type === STONE && y > surface + 10 && blobs[i] === 0) {
+        type = GRANITE;
       }
       world[i] = type;
     }
   }
+
+  placeOres(world, mulberry32(seed + 2)); // los minerales solo reemplazan piedra común
   return world;
 }
