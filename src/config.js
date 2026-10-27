@@ -13,6 +13,8 @@ export const GRANITE = 5;
 export const DIAMOND = 6;
 export const BEDROCK = 7;
 export const PLATFORM = 8; // plataforma indestructible bajo la tienda
+export const SAND = 9;     // cae y se desparrama
+export const GRAVEL = 10;  // cae derecho y se apila
 
 // Color de cada tipo (el aire no se dibuja)
 export const COLORS = {
@@ -24,6 +26,8 @@ export const COLORS = {
   [DIAMOND]: 0x4fe3ff,
   [BEDROCK]: 0x15151b,
   [PLATFORM]: 0x8a9bb0,
+  [SAND]: 0xe3cf8a,
+  [GRAVEL]: 0x9a9486,
 };
 
 export const NAMES = {
@@ -36,6 +40,8 @@ export const NAMES = {
   [DIAMOND]: 'Diamante',
   [BEDROCK]: 'Roca base',
   [PLATFORM]: 'Plataforma',
+  [SAND]: 'Arena',
+  [GRAVEL]: 'Grava',
 };
 
 // Dureza de cada material. El pico rompe celdas con dureza <= su poder.
@@ -48,6 +54,8 @@ export const HARDNESS = {
   [DIAMOND]: 3,
   [BEDROCK]: 99, // nada la rompe
   [PLATFORM]: 99,
+  [SAND]: 1,
+  [GRAVEL]: 1,
 };
 export const DIG_BASE_POWER = 2;
 
@@ -57,6 +65,9 @@ export const ORES = [
   { type: IRON, chance: 0.008, minDepth: 0.28, size: 5 },
   { type: GOLD, chance: 0.005, minDepth: 0.55, size: 3 },
   { type: DIAMOND, chance: 0.0015, minDepth: 0.75, size: 2 },
+  // bolsas de arena y grava (fat = bolsas gordas en vez de venas finas); no se juntan ni se venden
+  { type: SAND, chance: 0.0012, minDepth: 0.4, size: 40, fat: true },
+  { type: GRAVEL, chance: 0.0008, minDepth: 0.5, size: 28, fat: true },
 ];
 export const ORE_VALUE = { [IRON]: 10, [GOLD]: 50, [DIAMOND]: 200 };
 export const ORE_NAME = { [IRON]: 'Hierro', [GOLD]: 'Oro', [DIAMOND]: 'Diamante' };
@@ -84,7 +95,7 @@ export const CARGO_BASE = 30;
 export const CARGO_PER_LEVEL = 20;
 
 // Excavación
-export const DIG_RADIUS = 1;    // radio base, en celdas (las mejoras lo agrandan)
+export const DIG_RADIUS = 1.5;  // radio base, en celdas (las mejoras lo agrandan)
 export const DIG_REACH = 6;
 export const DIG_DELAY = 0.08;
 
@@ -98,6 +109,14 @@ export const UPGRADES = {
   fuel: { name: 'Tanque de combustible', max: 4, cost: [80, 200, 400, 700], desc: '+30 de combustible' },
   bag: { name: 'Mochila grande', max: 4, cost: [60, 150, 350, 600], desc: '+20 de capacidad' },
 };
+
+// Simulación del terreno (autómata celular)
+export const LOOSE = [SAND, GRAVEL];       // caen siempre que tengan aire debajo
+// Derrumbes: ancho máximo (en celdas) que puede quedar sin apoyo según la dureza.
+// Los materiales que no figuran acá (dureza 2 o más) nunca se derrumban.
+// Si agregás `2: 8`, la piedra también cede en tramos de más de 8 celdas.
+export const SPAN_BY_HARDNESS = { 1: 4 };
+export const SIM_HZ = 30;                  // pasos de simulación por segundo
 
 // Objetivo: llegar a esta profundidad (en celdas desde la superficie de la tienda)
 export const GOAL_DEPTH = 150;

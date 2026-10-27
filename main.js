@@ -1,6 +1,6 @@
 import {
   CELL, COLS, ROWS, CHUNK, NAMES, HARDNESS, COLORS, ORE_VALUE, ORE_NAME,
-  DIG_REACH, DIG_DELAY, SELL_RANGE, DYNAMITE, GOAL_DEPTH,
+  DIG_REACH, DIG_DELAY, SELL_RANGE, DYNAMITE, GOAL_DEPTH, SIM_HZ,
 } from './src/config.js';
 import { seedFromText } from './src/random.js';
 import { generateWorld } from './src/worldgen.js';
@@ -10,7 +10,7 @@ import {
 import { createPlayer, updatePlayer } from './src/player.js';
 import { updateCamera } from './src/camera.js';
 import { createChunks, chunkIndexOf, CHUNKS_X, CHUNKS_Y } from './src/chunks.js';
-import { dig, applyDelta } from './src/dig.js';
+import { dig, applyDelta, createSim } from './src/dig.js';
 import { createMinimap } from './src/minimap.js';
 import { createParticles } from './src/particles.js';
 import {
@@ -40,7 +40,7 @@ function startGame(seed) {
   const world = generateWorld(seed);
   debug.log(`Mundo generado (seed ${seed}) en ${(performance.now() - tGen).toFixed(0)} ms`);
 
-  const delta = new Map(); // chunk -> Set de celdas destruidas
+  const delta = new Map(); // chunk -> Map(celda -> tipo nuevo): todo lo que cambió respecto de la seed
   const stats = createStats();
 
   const worldLayer = new PIXI.Container();
@@ -49,6 +49,14 @@ function startGame(seed) {
 
   const chunks = createChunks(world);
   worldLayer.addChild(chunks.container);
+
+  const sim = createSim(world, delta, chunks); // arena, grava y derrumbes
+
+  // modo simulación (tecla V): pinta las celdas que se movieron y los chunks que se están simulando
+  const simGfx = new PIXI.Graphics();
+  worldLayer.addChild(simGfx);
+  let simView = false;
+  const heat = new Map(); // celda -> segundos desde que se movió
 
   const player = createPlayer(world);
   const startY = player.y + player.h;                              // altura de la superficie inicial
@@ -102,11 +110,15 @@ function startGame(seed) {
   let shake = 0;
   let near = false;             // ¿el jugador está cerca de la tienda?
   let actionText = '';          // se completa con el redibujo y va al registro de debug
-  let deltaCells = 0;
   let rebuiltTotal = 0;
   let lastRebuild = { n: 0, ms: 0 };
   let tcx = 0, tcy = 0, inReach = false; // celda bajo el mouse
   const bombs = [];
+  const SIM_STEP = 1 / SIM_HZ;
+  let simAcc = 0;
+  let burst = null;              // resumen de un derrumbe en curso
+  let lastActiveChunks = [];
+  let lastActiveTime = -99;
 
   const say = (text, secs = 2.5) => { msg = text; msgTimer = secs; };
   const showBanner = (text, secs = 8) => {
@@ -144,8 +156,9 @@ function startGame(seed) {
       }
     });
     const ms = performance.now() - t;
-    deltaCells += res.count;
     collect(res.broken);
+    const R = Math.ceil(radius) + 1;
+    sim.wakeRect(cx - R, cy - R, cx + R, cy + R); // el terreno de alrededor puede perder apoyo
 
     if (res.count === 0 && res.blocked > 0) {
       const under = cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS ? world[cy * COLS + cx] : 0;
@@ -192,6 +205,71 @@ function startGame(seed) {
     }
   }
 
+  // ---------- Simulación del terreno ----------
+  // celdas que ocupa el jugador: nada puede caer adentro de su caja
+  function occupiedCells() {
+    const set = new Set();
+    const x0 = Math.floor(player.x / CELL);
+    const x1 = Math.floor((player.x + player.w - 0.001) / CELL);
+    const y0 = Math.floor(player.y / CELL);
+    const y1 = Math.floor((player.y + player.h - 0.001) / CELL);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set.add(y * COLS + x);
+    return set;
+  }
+
+  function runSimStep() {
+    if (sim.pendingCount === 0) return; // nada activo: no se simula
+    sim.step(occupiedCells());
+    const st = sim.stats;
+    lastActiveChunks = sim.lastActive;
+    lastActiveTime = playTime;
+
+    if (st.moved > 0) {
+      if (!burst) {
+        burst = { moved: 0, steps: 0, ms: 0 };
+        debug.log('Simulación: el terreno empezó a moverse');
+      }
+      burst.moved += st.moved;
+      burst.steps++;
+      burst.ms += st.ms;
+      if (simView) for (const i of sim.moved) heat.set(i, 0);
+    }
+    if (sim.pendingCount === 0 && burst) {
+      debug.log(`Terreno estable: ${burst.moved} movimientos de celda en ${burst.steps} pasos (${burst.ms.toFixed(1)} ms de simulación)`);
+      burst = null;
+    }
+  }
+
+  // dibuja el modo simulación: magenta = celdas que se movieron hace poco, celeste = chunks simulados
+  function drawSimView(dt) {
+    simGfx.clear();
+    const fresh = [], mid = [], old = [];
+    for (const [i, age] of heat) {
+      const a = age + dt;
+      if (a > 0.5) { heat.delete(i); continue; }
+      heat.set(i, a);
+      (a < 0.15 ? fresh : a < 0.3 ? mid : old).push(i);
+    }
+    const paint = (list, alpha) => {
+      if (!list.length) return;
+      for (const i of list) {
+        const x = i % COLS;
+        simGfx.rect(x * CELL, ((i - x) / COLS) * CELL, CELL, CELL);
+      }
+      simGfx.fill({ color: 0xff2bd6, alpha });
+    };
+    paint(old, 0.25);
+    paint(mid, 0.55);
+    paint(fresh, 0.9);
+
+    if (playTime - lastActiveTime < 0.25) {
+      for (const c of lastActiveChunks) {
+        simGfx.rect((c % CHUNKS_X) * CHUNK * CELL, Math.floor(c / CHUNKS_X) * CHUNK * CELL, CHUNK * CELL, CHUNK * CELL);
+      }
+      simGfx.stroke({ width: 1, color: 0x2ee6ff, alpha: 0.7 });
+    }
+  }
+
   // ---------- Teclas de la partida ----------
   function onKey(e) {
     if (e.target instanceof HTMLInputElement || e.repeat) return;
@@ -208,6 +286,10 @@ function startGame(seed) {
       chunks.markAllDirty();
     } else if (e.code === 'KeyU') {
       debugOn = debug.toggle();
+    } else if (e.code === 'KeyV') {
+      simView = !simView;
+      if (!simView) { heat.clear(); simGfx.clear(); }
+      debug.log(`Modo simulación ${simView ? 'activado' : 'desactivado'}`);
     } else if (e.code === 'KeyM') {
       const big = minimap.toggleSize();
       debug.log(`Minimapa ${big ? 'grande' : 'normal'}`);
@@ -229,6 +311,9 @@ function startGame(seed) {
     const pcy = Math.floor((player.y + player.h / 2) / CELL);
     const inWorld = tcx >= 0 && tcy >= 0 && tcx < COLS && tcy < ROWS;
     const mouseType = inWorld ? world[tcy * COLS + tcx] : 0;
+    let deltaCells = 0;
+    for (const m of delta.values()) deltaCells += m.size;
+    const ss = sim.stats;
     return [
       `Seed: ${seed}   Mundo: ${COLS}x${ROWS} celdas (${CHUNKS_X}x${CHUNKS_Y} chunks de ${CHUNK})`,
       `Jugador: celda (${pcx}, ${pcy})  vel (${Math.round(player.vx)}, ${Math.round(player.vy)}) px/s`,
@@ -237,7 +322,9 @@ function startGame(seed) {
       `Mouse: celda (${tcx}, ${tcy})  ${NAMES[mouseType]}  dureza ${HARDNESS[mouseType] ?? 0}  ${inReach ? 'al alcance' : 'lejos'}`,
       `Chunks visibles: ${chunks.visibleCount} de ${chunks.total}   redibujos totales: ${rebuiltTotal}`,
       `Último redibujo: ${lastRebuild.n} chunk(s) en ${lastRebuild.ms.toFixed(2)} ms`,
-      `Delta: ${deltaCells} celdas destruidas en ${delta.size} chunk(s)`,
+      `Delta: ${deltaCells} celdas cambiadas en ${delta.size} chunk(s)`,
+      `Simulación: ${ss.steps} pasos, chunks activos ${ss.activeChunks}, revisadas ${ss.examined}, movidas ${ss.moved}, ${ss.ms.toFixed(2)} ms`,
+      `  pendientes ${sim.pendingCount} chunk(s), movidas en total ${ss.totalMoved}, modo visual (V): ${simView ? 'sí' : 'no'}`,
       `Dinamitas activas: ${bombs.length}   partículas: ${particles.count}`,
       `Pico: radio ${digRadius(stats)}, poder ${digPower(stats)}   mochila ${cargoTotal()}/${bagMax(stats)}`,
     ];
@@ -285,6 +372,16 @@ function startGame(seed) {
     }
     updateBombs(dt);
 
+    // simulación a paso fijo (máximo 2 pasos por frame para no trabar el juego)
+    simAcc += dt;
+    let simRuns = 0;
+    while (simAcc >= SIM_STEP && simRuns < 2) {
+      simAcc -= SIM_STEP;
+      simRuns++;
+      runSimStep();
+    }
+    if (simAcc > SIM_STEP) simAcc = 0;
+
     // en la tienda: vender todo y llenar el combustible
     near = Math.hypot(pcx - shopX, pcy - shopY) <= SELL_RANGE * CELL;
     if (near) {
@@ -302,6 +399,7 @@ function startGame(seed) {
     }
 
     particles.update(dt);
+    if (simView) drawSimView(dt);
 
     // redibujar solo los chunks modificados y repintarlos en el minimapa
     const tR = performance.now();
