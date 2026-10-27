@@ -1,6 +1,6 @@
 import { COLS, ROWS } from './config.js';
 
-// Devuelve una grilla: 1 = pared, 0 = hueco
+// Cellular Automata. Devuelve una grilla: 1 = pared, 0 = hueco
 export function generateCaves(rand, wallChance = 0.47, steps = 4) {
   // 1) ruido inicial al azar
   let grid = new Uint8Array(COLS * ROWS);
@@ -27,7 +27,7 @@ export function generateCaves(rand, wallChance = 0.47, steps = 4) {
         next[y * COLS + x] = walls >= 5 ? 1 : 0;
       }
     }
-    grid = next; // usamos una copia nueva para no leer celdas ya modificadas
+    grid = next; // copia nueva para no leer celdas ya modificadas
   }
   return grid;
 }

@@ -21,6 +21,7 @@ export function createPlayer(world) {
     vx: 0, vy: 0,
     onGround: false,
     fuel: FUEL_MAX,
+    fuelMax: FUEL_MAX, // las mejoras del tanque lo agrandan
     flying: false,
   };
 }
@@ -100,5 +101,5 @@ export function updatePlayer(world, p, input, dt) {
   moveY(world, p, p.vy * dt);
 
   // en el suelo el combustible se recarga solo
-  if (p.onGround) p.fuel = Math.min(FUEL_MAX, p.fuel + FUEL_REGEN * dt);
+  if (p.onGround) p.fuel = Math.min(p.fuelMax, p.fuel + FUEL_REGEN * dt);
 }
