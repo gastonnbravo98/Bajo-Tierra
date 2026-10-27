@@ -147,7 +147,11 @@ function startGame(seed) {
     deltaCells += res.count;
     collect(res.broken);
 
-    if (res.count === 0 && res.blocked > 0) say('Material muy duro: necesitás el pico de acero', 1.5);
+    if (res.count === 0 && res.blocked > 0) {
+      const under = cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS ? world[cy * COLS + cx] : 0;
+      if ((HARDNESS[under] ?? 0) >= 99) say('Eso no se puede romper', 1.5);
+      else say('Material muy duro: necesitás el pico de acero', 1.5);
+    }
 
     if (res.count > 0 || res.blocked > 0) {
       const parts = Object.entries(res.broken).map(([type, n]) => `${NAMES[type]} ${n}`).join(', ');

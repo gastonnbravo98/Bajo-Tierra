@@ -33,22 +33,22 @@
     #menu button:hover { background: #38b95e; }
 
     /* HUD y panel de debug */
-    #hud, #debug {
-      display: none; position: fixed; z-index: 5; padding: 8px 12px;
+     #hud, #debug {
+      display: none; position: fixed; z-index: 5; padding: 5px 8px;
       background: var(--panel); color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 6px;
-      font: 14px/1.5 monospace; white-space: pre; pointer-events: none;
+      font: 11px/1.4 monospace; white-space: pre; pointer-events: none;
     }
     #hud { top: 12px; left: 12px; }
-    #debug { bottom: 12px; left: 12px; font-size: 12px; line-height: 1.45; max-width: 70vw; overflow: hidden; }
+    #debug { bottom: 12px; left: 12px; font-size: 10px; line-height: 1.35; max-width: 60vw; overflow: hidden; }
 
     /* Minimapa: normal a la derecha, la tecla M lo agranda */
-    #minimap {
+     #minimap {
       position: fixed; top: 12px; right: 12px; z-index: 5;
-      width: min(400px, 40vw); image-rendering: pixelated;
+      width: min(200px, 20vw); image-rendering: pixelated;
       border: 2px solid rgba(255, 255, 255, 0.6); background: #000; pointer-events: none;
     }
-    #minimap.big { width: min(900px, 70vw); opacity: 0.94; }
+    #minimap.big { width: min(440px, 42vw); opacity: 0.94; }
 
     /* Aviso de meta */
     #banner {

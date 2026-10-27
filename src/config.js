@@ -12,6 +12,7 @@ export const GOLD = 4;
 export const GRANITE = 5;
 export const DIAMOND = 6;
 export const BEDROCK = 7;
+export const PLATFORM = 8; // plataforma indestructible bajo la tienda
 
 // Color de cada tipo (el aire no se dibuja)
 export const COLORS = {
@@ -22,6 +23,7 @@ export const COLORS = {
   [GRANITE]: 0x4a4a52,
   [DIAMOND]: 0x4fe3ff,
   [BEDROCK]: 0x15151b,
+  [PLATFORM]: 0x8a9bb0,
 };
 
 export const NAMES = {
@@ -33,6 +35,7 @@ export const NAMES = {
   [GRANITE]: 'Granito',
   [DIAMOND]: 'Diamante',
   [BEDROCK]: 'Roca base',
+  [PLATFORM]: 'Plataforma',
 };
 
 // Dureza de cada material. El pico rompe celdas con dureza <= su poder.
@@ -44,6 +47,7 @@ export const HARDNESS = {
   [GRANITE]: 3,
   [DIAMOND]: 3,
   [BEDROCK]: 99, // nada la rompe
+  [PLATFORM]: 99,
 };
 export const DIG_BASE_POWER = 2;
 
@@ -80,7 +84,7 @@ export const CARGO_BASE = 30;
 export const CARGO_PER_LEVEL = 20;
 
 // Excavación
-export const DIG_RADIUS = 2;    // radio base, en celdas (las mejoras lo agrandan)
+export const DIG_RADIUS = 1;    // radio base, en celdas (las mejoras lo agrandan)
 export const DIG_REACH = 6;
 export const DIG_DELAY = 0.08;
 

@@ -1,4 +1,4 @@
-import { COLS, ROWS, AIR, DIRT, STONE, GRANITE, BEDROCK } from './config.js';
+import { COLS, ROWS, AIR, DIRT, STONE, GRANITE, BEDROCK, PLATFORM } from './config.js';
 import { mulberry32 } from './random.js';
 import { makeNoise1D } from './noise.js';
 import { generateCaves } from './caves.js';
@@ -31,6 +31,9 @@ export function generateWorld(seed) {
 
       // donde el autómata deja pared, la piedra pasa a ser granito (más duro)
       if (type === STONE && y > surface + 10 && blobs[i] === 1) type = GRANITE;
+
+      // plataforma indestructible de 9 columnas x 2 filas bajo la tienda y el punto de salida
+      if (Math.abs(x - mid) <= 4 && y >= surface && y < surface + 2) type = PLATFORM;
 
       // las dos últimas filas son roca base: indestructible
       if (y >= ROWS - 2) type = BEDROCK;
