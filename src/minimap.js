@@ -35,6 +35,11 @@ export function createMinimap(world) {
   const ctx = view.getContext('2d');
 
   return {
+    // alterna entre tamaño normal y grande (tecla M)
+    toggleSize() {
+      return view.classList.toggle('big');
+    },
+
     // descubrir lo que rodea al jugador (px, py en celdas)
     reveal(px, py) {
       const R = MINIMAP_RADIUS;
@@ -64,9 +69,21 @@ export function createMinimap(world) {
     },
 
     // camX, camY y screenW, screenH están en píxeles del mundo
-    draw(player, camX, camY, screenW, screenH) {
+    draw({ player, camX, camY, screenW, screenH, shopCol, shopRow, goalRow }) {
       if (changed) { bctx.putImageData(img, 0, 0); changed = false; }
       ctx.drawImage(base, 0, 0);
+
+      // línea de meta
+      if (goalRow >= 0 && goalRow < ROWS) {
+        ctx.fillStyle = 'rgba(255, 224, 102, 0.75)';
+        ctx.fillRect(0, goalRow, COLS, 1.5);
+      }
+
+      // cabaña de la tienda
+      if (shopCol !== undefined && shopRow !== undefined) {
+        ctx.fillStyle = '#38b95e';
+        ctx.fillRect(shopCol - 2, shopRow - 3, 5, 3);
+      }
 
       // recuadro de lo que ve la cámara
       ctx.strokeStyle = 'rgba(255,255,255,0.8)';

@@ -11,47 +11,152 @@ function recordDelta(delta, chunk, i, type) {
   m.set(i, type);
 }
 
-// Reaplica sobre un mundo recién generado todo lo que cambió (cavado, explosiones y caídas)
+// Reaplica sobre un mundo recién generado todo lo que cambió (cavado, explosiones, láser y caídas)
 export function applyDelta(world, delta) {
   for (const m of delta.values()) {
     for (const [i, type] of m) world[i] = type;
   }
 }
 
-// ---------- Cavar (Unidad 7) ----------
-// Vacía las celdas dentro de un círculo centrado en la celda (cx, cy) (máscara de sustracción).
-// - power: dureza máxima que se puede romper. Lo más duro queda intacto y se cuenta en "blocked".
-// - onBreak(x, y, tipo): se llama por cada celda rota (la usan las partículas).
+// ---------- Formas del golpe (Unidad 7: máscaras de sustracción) ----------
+const COS_CONE = Math.cos((30 * Math.PI) / 180); // el cono abre 30 grados a cada lado
+
+// Celdas (índices) que cubre un golpe centrado en (cx, cy).
+// El cono sale desde la celda del jugador (px, py) hacia el cursor.
+export function shapeCells(shape, cx, cy, radius, px, py) {
+  const cells = [];
+  const add = (x, y) => { if (x >= 0 && y >= 0 && x < COLS && y < ROWS) cells.push(y * COLS + x); };
+
+  if (shape === 'cross') {
+    const arm = Math.ceil(radius * 2);
+    for (let k = -arm; k <= arm; k++) { add(cx + k, cy); if (k !== 0) add(cx, cy + k); }
+  } else if (shape === 'drill') {
+    const len = Math.ceil(radius * 4);
+    for (let k = 0; k < len; k++) add(cx, cy + k);       // una columna hacia abajo
+  } else if (shape === 'cone') {
+    const dx = cx - px;
+    const dy = cy - py;
+    const d = Math.hypot(dx, dy) || 1;
+    const ux = dx / d;
+    const uy = dy / d;
+    const len = 2 + radius * 2;
+    const r = Math.ceil(len);
+    for (let y = py - r; y <= py + r; y++) {
+      for (let x = px - r; x <= px + r; x++) {
+        const vx = x - px;
+        const vy = y - py;
+        const dist = Math.hypot(vx, vy);
+        if (dist < 0.9 || dist > len) continue;
+        if ((vx * ux + vy * uy) / dist >= COS_CONE) add(x, y);
+      }
+    }
+  } else {
+    const r = Math.ceil(radius);                          // círculo
+    for (let y = cy - r; y <= cy + r; y++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        if (dx * dx + dy * dy <= radius * radius) add(x, y);
+      }
+    }
+  }
+  return cells;
+}
+
+// Rectángulo de celdas que ocupa una lista de índices (o null si está vacía)
+export function cellsBounds(cells) {
+  if (!cells.length) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const i of cells) {
+    const x = i % COLS;
+    const y = (i - x) / COLS;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  }
+  return { x0, y0, x1, y1 };
+}
+
+// rompe una celda: la vacía, la anota en el delta y marca su chunk para redibujar
+function breakCell(world, delta, chunks, i, broken, onBreak) {
+  const type = world[i];
+  const x = i % COLS;
+  const y = (i - x) / COLS;
+  broken[type] = (broken[type] || 0) + 1;
+  world[i] = AIR;
+  const c = chunkIndexOf(x, y);
+  recordDelta(delta, c, i, AIR);
+  chunks.markDirty(c);
+  if (onBreak) onBreak(x, y, type);
+}
+
+// ---------- Cavar ----------
+// Vacía las celdas dadas. power = dureza máxima que se puede romper: lo más duro queda
+// intacto y se cuenta en "blocked". onBreak(x, y, tipo) se llama por cada celda rota.
 // Devuelve { broken: {tipo: cantidad}, count, blocked }.
-export function dig(world, delta, chunks, cx, cy, radius, power, onBreak) {
+export function digCells(world, delta, chunks, cells, power, onBreak) {
   const broken = {};
   let count = 0;
   let blocked = 0;
-  const r = Math.ceil(radius);
-  for (let y = cy - r; y <= cy + r; y++) {
-    for (let x = cx - r; x <= cx + r; x++) {
-      if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
-      const dx = x - cx;
-      const dy = y - cy;
-      if (dx * dx + dy * dy > radius * radius) continue;
-
-      const i = y * COLS + x;
-      const type = world[i];
-      if (type === AIR) continue;
-      if (HARDNESS[type] > power) { blocked++; continue; }
-
-      broken[type] = (broken[type] || 0) + 1;
-      count++;
-      world[i] = AIR;
-
-      const c = chunkIndexOf(x, y);
-      recordDelta(delta, c, i, AIR);
-      chunks.markDirty(c);
-
-      if (onBreak) onBreak(x, y, type);
-    }
+  for (const i of cells) {
+    const type = world[i];
+    if (type === AIR) continue;
+    if (HARDNESS[type] > power) { blocked++; continue; }
+    breakCell(world, delta, chunks, i, broken, onBreak);
+    count++;
   }
   return { broken, count, blocked };
+}
+
+// Golpe circular (lo usan la dinamita y los tests)
+export function dig(world, delta, chunks, cx, cy, radius, power, onBreak) {
+  return digCells(world, delta, chunks, shapeCells('circle', cx, cy, radius), power, onBreak);
+}
+
+// ---------- Láser: raycasting sobre la grilla (DDA) ----------
+// Recorre, en orden, las celdas que atraviesa un rayo. (ox, oy) en unidades de celda
+// (con decimales), (dx, dy) = dirección normalizada, maxDist en celdas.
+export function rayCells(ox, oy, dx, dy, maxDist) {
+  const cells = [];
+  let cx = Math.floor(ox);
+  let cy = Math.floor(oy);
+  const stepX = dx > 0 ? 1 : -1;
+  const stepY = dy > 0 ? 1 : -1;
+  const tDeltaX = dx === 0 ? Infinity : Math.abs(1 / dx);
+  const tDeltaY = dy === 0 ? Infinity : Math.abs(1 / dy);
+  let tMaxX = dx === 0 ? Infinity : (dx > 0 ? cx + 1 - ox : ox - cx) * tDeltaX;
+  let tMaxY = dy === 0 ? Infinity : (dy > 0 ? cy + 1 - oy : oy - cy) * tDeltaY;
+
+  while (cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS) {
+    cells.push(cy * COLS + cx);
+    const t = Math.min(tMaxX, tMaxY);
+    if (t > maxDist) break;
+    if (tMaxX < tMaxY) { cx += stepX; tMaxX += tDeltaX; }
+    else { cy += stepY; tMaxY += tDeltaY; }
+  }
+  return cells;
+}
+
+// Dispara un rayo que rompe hasta `pierce` celdas en línea recta.
+// Se frena al llegar a algo más duro que `power`.
+// Devuelve { broken, count, blocked, hitCells, last }, donde last es la última celda alcanzada.
+export function laser(world, delta, chunks, ox, oy, dx, dy, pierce, range, power, onBreak) {
+  const path = rayCells(ox, oy, dx, dy, range);
+  const broken = {};
+  const hitCells = [];
+  let blocked = 0;
+  let last = path.length ? path[path.length - 1] : -1;
+  for (const i of path) {
+    const type = world[i];
+    if (type === AIR) continue;
+    if (HARDNESS[type] > power) { blocked++; last = i; break; }
+    breakCell(world, delta, chunks, i, broken, onBreak);
+    hitCells.push(i);
+    last = i;
+    if (hitCells.length >= pierce) break;
+  }
+  return { broken, count: hitCells.length, blocked, hitCells, last };
 }
 
 // ---------- Simulación del terreno (autómata celular) ----------

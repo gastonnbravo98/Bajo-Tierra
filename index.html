@@ -21,8 +21,8 @@
       gap: 14px; background: #111; color: #eee; font-family: sans-serif;
     }
     #menu h1 { margin: 0; font-size: 56px; letter-spacing: 2px; }
-    #menu p { margin: 0; color: #aaa; text-align: center; max-width: 560px; }
-    #menu input {
+    #menu p { margin: 0; color: #aaa; text-align: center; max-width: 620px; }
+    #menu input, #menu select {
       width: 260px; padding: 10px; font-size: 16px; text-align: center;
       background: #222; color: #eee; border: 1px solid #555; border-radius: 4px;
     }
@@ -33,7 +33,7 @@
     #menu button:hover { background: #38b95e; }
 
     /* HUD y panel de debug */
-     #hud, #debug {
+    #hud, #debug {
       display: none; position: fixed; z-index: 5; padding: 5px 8px;
       background: var(--panel); color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 6px;
@@ -43,7 +43,7 @@
     #debug { bottom: 12px; left: 12px; font-size: 10px; line-height: 1.35; max-width: 60vw; overflow: hidden; }
 
     /* Minimapa: normal a la derecha, la tecla M lo agranda */
-     #minimap {
+    #minimap {
       position: fixed; top: 12px; right: 12px; z-index: 5;
       width: min(200px, 20vw); image-rendering: pixelated;
       border: 2px solid rgba(255, 255, 255, 0.6); background: #000; pointer-events: none;
@@ -60,19 +60,25 @@
 
     /* Tienda */
     #shop {
-      display: none; position: fixed; right: 12px; bottom: 12px; z-index: 7; width: 340px;
+      display: none; position: fixed; right: 12px; bottom: 12px; z-index: 7; width: 380px;
+      max-height: calc(100vh - 24px); overflow-y: auto;
       padding: 14px; background: var(--panel); color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 6px; font-family: sans-serif;
     }
     #shop h2 { margin: 0 0 4px; font-size: 22px; }
-    #shop .shop-money { margin: 0 0 10px; color: var(--gold); font-weight: 600; }
+    #shop h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+    #shop .shop-money { margin: 0 0 6px; color: var(--gold); font-weight: 600; }
     #shop .shop-hint { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+    #shop .shop-empty { color: var(--muted); font-size: 13px; }
+    #shop .shop-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
     #shop button {
       display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; width: 100%;
       margin-bottom: 6px; padding: 8px 10px; text-align: left; cursor: pointer;
       background: #4a2f1c; color: var(--text); border: 1px solid var(--panel-border); border-radius: 4px;
       font: 15px sans-serif;
     }
+    #shop button.chip { display: inline-block; width: auto; margin: 0; padding: 4px 8px; font-size: 13px; }
+    #shop button.chip-all { display: block; width: 100%; margin-top: 4px; text-align: center; }
     #shop button small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
     #shop button strong { color: var(--gold); }
     #shop button:hover:not(:disabled) { background: #6a4326; }
@@ -85,11 +91,16 @@
 
   <div id="menu">
     <h1>Bajo Tierra</h1>
-    <p>Cavá, juntá minerales, vendelos en la tienda y mejorá tu equipo para llegar cada vez más hondo</p>
+    <p>Cavá, juntá minerales, fabricá mejores herramientas y llegá cada vez más hondo</p>
     <input id="seed-input" type="text" placeholder="Seed (vacío = aleatoria)" autocomplete="off" maxlength="30">
+    <select id="size-select" aria-label="Tamaño del mundo">
+      <option value="small">Mundo pequeño</option>
+      <option value="medium" selected>Mundo mediano</option>
+      <option value="large">Mundo grande</option>
+    </select>
     <button id="play-btn">Jugar</button>
     <p id="last-seed"></p>
-    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · E tienda · M minimapa grande · U depuración · V modo simulación · Esc menú</p>
+    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · Q forma del pico · F láser · E tienda · M minimapa · U depuración · V simulación · Esc menú</p>
   </div>
   <div id="hud"></div>
   <div id="debug"></div>

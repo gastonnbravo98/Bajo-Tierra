@@ -1,26 +1,32 @@
 import {
   CELL, COLS, ROWS, CHUNK, NAMES, HARDNESS, COLORS, ORE_VALUE, ORE_NAME,
-  DIG_REACH, DIG_DELAY, SELL_RANGE, DYNAMITE, GOAL_DEPTH, SIM_HZ,
+  DIG_REACH, DIG_DELAY, SELL_RANGE, DYNAMITE, LASER, CRYSTAL, CRYSTAL_FUEL, SIM_HZ,
+  SIZES, BIOME_NAMES, SHAPE_NAMES, setWorldSize, goalDepth,
 } from './src/config.js';
 import { seedFromText } from './src/random.js';
-import { generateWorld } from './src/worldgen.js';
+import { generateWorld, generateBiomes } from './src/worldgen.js';
 import {
-  createPlayerSprite, createShop, createBackground, createBomb, createGoalLine,
+  createPlayerSprite, updatePlayerSprite, createShop, createBackground,
+  createBomb, createGoalLine, createFloatingTexts, createEffects,
 } from './src/render.js';
 import { createPlayer, updatePlayer } from './src/player.js';
 import { updateCamera } from './src/camera.js';
 import { createChunks, chunkIndexOf, CHUNKS_X, CHUNKS_Y } from './src/chunks.js';
-import { dig, applyDelta, createSim } from './src/dig.js';
+import {
+  digCells, shapeCells, cellsBounds, laser, applyDelta, createSim,
+} from './src/dig.js';
 import { createMinimap } from './src/minimap.js';
 import { createParticles } from './src/particles.js';
 import {
   createStats, createShopPanel, digRadius, digPower, fuelMax, bagMax,
+  fortuneChance, laserPierce, availableShapes, cycleShape, stashCount, stashValue,
 } from './src/shop.js';
 import { createDebug, mmss } from './src/debug.js';
 import { input } from './src/input.js';
 
 const menuEl = document.getElementById('menu');
 const seedInput = document.getElementById('seed-input');
+const sizeSelect = document.getElementById('size-select');
 const playBtn = document.getElementById('play-btn');
 const lastSeedEl = document.getElementById('last-seed');
 const hudEl = document.getElementById('hud');
@@ -33,12 +39,15 @@ let currentGame = null;
 let debugOn = false; // se mantiene al volver al menú y jugar de nuevo
 
 // ---------- Una partida ----------
-function startGame(seed) {
+function startGame(seed, sizeKey) {
+  setWorldSize(sizeKey); // COLS y ROWS cambian para todos los módulos
+  const GOAL = goalDepth();
   const debug = createDebug(debugEl, debugOn);
 
   const tGen = performance.now();
   const world = generateWorld(seed);
-  debug.log(`Mundo generado (seed ${seed}) en ${(performance.now() - tGen).toFixed(0)} ms`);
+  const biomes = generateBiomes(seed);
+  debug.log(`Mundo ${SIZES[sizeKey].name} ${COLS}x${ROWS} generado (seed ${seed}) en ${(performance.now() - tGen).toFixed(0)} ms`);
 
   const delta = new Map(); // chunk -> Map(celda -> tipo nuevo): todo lo que cambió respecto de la seed
   const stats = createStats();
@@ -47,7 +56,7 @@ function startGame(seed) {
   app.stage.addChild(worldLayer);
   worldLayer.addChild(createBackground(world));
 
-  const chunks = createChunks(world);
+  const chunks = createChunks(world, biomes);
   worldLayer.addChild(chunks.container);
 
   const sim = createSim(world, delta, chunks); // arena, grava y derrumbes
@@ -61,7 +70,7 @@ function startGame(seed) {
   const player = createPlayer(world);
   const startY = player.y + player.h;                              // altura de la superficie inicial
   const startRow = Math.round(startY / CELL);
-  const goalRow = startRow + GOAL_DEPTH;
+  const goalRow = startRow + GOAL;
   const spawnCol = Math.floor((player.x + player.w / 2) / CELL);
 
   worldLayer.addChild(createGoalLine(goalRow * CELL));
@@ -71,26 +80,20 @@ function startGame(seed) {
   const shopX = (spawnCol + 0.5) * CELL;
   const shopY = startY - CELL;
 
-  // llama del jetpack (se ve solo mientras vuela)
-  const flame = new PIXI.Graphics();
-  flame.rect(0, 0, player.w * 0.5, CELL * 0.9).fill(0xff9f1c);
-  flame.visible = false;
-  worldLayer.addChild(flame);
-
   const playerSprite = createPlayerSprite(player);
   worldLayer.addChild(playerSprite);
 
   const particles = createParticles();
   worldLayer.addChild(particles.layer);
 
-  // círculo que muestra dónde se va a cavar (su radio crece con las mejoras)
-  const cursor = new PIXI.Graphics();
-  worldLayer.addChild(cursor);
-  let cursorRadius = 0;
-  function drawCursor() {
-    cursor.clear();
-    cursor.circle(0, 0, cursorRadius * CELL).stroke({ width: 2, color: 0xffffff });
-  }
+  const effects = createEffects();
+  worldLayer.addChild(effects.layer);
+
+  const floatingTexts = createFloatingTexts();
+  worldLayer.addChild(floatingTexts.layer);
+
+  const preview = new PIXI.Graphics(); // celdas que va a romper el próximo golpe
+  worldLayer.addChild(preview);
 
   const minimap = createMinimap(world);
 
@@ -104,6 +107,8 @@ function startGame(seed) {
   let msgTimer = 0;
   let bannerTimer = 0;
   let digTimer = 0;
+  let laserCooldown = 0;
+  let smokeTimer = 0;
   let lastHud = '';
   let playTime = 0;
   let won = false;
@@ -112,6 +117,7 @@ function startGame(seed) {
   let actionText = '';          // se completa con el redibujo y va al registro de debug
   let rebuiltTotal = 0;
   let lastRebuild = { n: 0, ms: 0 };
+  let camX = 0, camY = 0;
   let tcx = 0, tcy = 0, inReach = false; // celda bajo el mouse
   const bombs = [];
   const SIM_STEP = 1 / SIM_HZ;
@@ -130,50 +136,72 @@ function startGame(seed) {
   const panel = createShopPanel(shopEl, stats, (text) => {
     say(text);
     debug.log(text);
+    floatingTexts.spawn(shopX, shopY - 26, text, 0xffe066);
   });
 
-  // ---------- Cavar y explotar (Unidad 7) ----------
-  // guarda en la mochila lo que entre; el resto se pierde
+  // ---------- Cavar, explotar y disparar (Unidad 7) ----------
+  // guarda en la mochila lo que entre (con fortuna); el resto se pierde. Los cristales recargan combustible.
   function collect(broken) {
     let free = bagMax(stats) - cargoTotal();
     let lost = 0;
+    let bonus = 0;
+    const fortune = fortuneChance(stats);
+    const gained = [];
     for (const t in broken) {
       if (!(t in cargo)) continue;
-      const take = Math.min(broken[t], Math.max(0, free));
+      let n = broken[t];
+      for (let k = 0; k < broken[t]; k++) if (Math.random() < fortune) { n++; bonus++; }
+      const take = Math.min(n, Math.max(0, free));
       cargo[t] += take;
       free -= take;
-      lost += broken[t] - take;
+      lost += n - take;
+      if (take > 0) gained.push(`+${take} ${ORE_NAME[t]}`);
+      if (Number(t) === CRYSTAL) player.fuel = Math.min(player.fuelMax, player.fuel + CRYSTAL_FUEL * take);
     }
-    if (lost > 0) say(`¡Mochila llena! Se perdieron ${lost} minerales`, 2);
+    const tx = player.x + player.w / 2;
+    const ty = player.y - 4;
+    if (gained.length) floatingTexts.spawn(tx, ty, gained.join(' · '), 0xffffff);
+    if (bonus > 0) {
+      say(`¡Fortuna! +${bonus} de bonus`, 1.5);
+      floatingTexts.spawn(tx, ty - 14, `¡Fortuna +${bonus}!`, 0x4fe3ff);
+    }
+    if (lost > 0) {
+      say(`¡Mochila llena! Se perdieron ${lost} minerales`, 2);
+      floatingTexts.spawn(tx, ty - 14, '¡Mochila llena!', 0xff6b6b);
+    }
   }
 
-  function applyDig(cx, cy, radius, power, kind) {
-    const t = performance.now();
-    const isBomb = kind === 'bomb';
-    const res = dig(world, delta, chunks, cx, cy, radius, power, (x, y, type) => {
-      if (Math.random() < 0.55) {
-        particles.spawn((x + 0.5) * CELL, (y + 0.5) * CELL, COLORS[type], 1, isBomb ? 1.8 : 1);
-      }
-    });
-    const ms = performance.now() - t;
+  const breakParticles = (power) => (x, y, type) => {
+    if (Math.random() < 0.55) particles.spawn((x + 0.5) * CELL, (y + 0.5) * CELL, COLORS[type], 1, power);
+  };
+
+  // lo que pasa después de romper celdas: mochila, despertar la simulación, mensajes y registro
+  function afterDig(res, label, cells, ms, cx, cy) {
     collect(res.broken);
-    const R = Math.ceil(radius) + 1;
-    sim.wakeRect(cx - R, cy - R, cx + R, cy + R); // el terreno de alrededor puede perder apoyo
+    const b = cellsBounds(cells);
+    if (b) sim.wakeRect(b.x0 - 1, b.y0 - 1, b.x1 + 1, b.y1 + 1); // el terreno de alrededor puede perder apoyo
 
     if (res.count === 0 && res.blocked > 0) {
       const under = cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS ? world[cy * COLS + cx] : 0;
       if ((HARDNESS[under] ?? 0) >= 99) say('Eso no se puede romper', 1.5);
-      else say('Material muy duro: necesitás el pico de acero', 1.5);
+      else say(`Material muy duro: ${NAMES[under]} pide un pico mejor`, 1.5);
     }
-
     if (res.count > 0 || res.blocked > 0) {
       const parts = Object.entries(res.broken).map(([type, n]) => `${NAMES[type]} ${n}`).join(', ');
       actionText =
-        `${isBomb ? 'Explosión' : 'Cavó'} en (${cx}, ${cy}): ${res.count} celdas` +
+        `${label} en (${cx}, ${cy}): ${res.count} celdas` +
         (parts ? ` [${parts}]` : '') +
         (res.blocked ? `, ${res.blocked} bloqueadas` : '') +
         ` en ${ms.toFixed(2)} ms`;
     }
+  }
+
+  function applyDig(cells, power, kind, cx, cy) {
+    const t = performance.now();
+    const isBomb = kind === 'bomb';
+    const res = digCells(world, delta, chunks, cells, power, breakParticles(isBomb ? 1.8 : 1));
+    const label = isBomb ? 'Explosión' : `Cavó (${SHAPE_NAMES[stats.shape]})`;
+    afterDig(res, label, cells, performance.now() - t, cx, cy);
     return res;
   }
 
@@ -191,18 +219,52 @@ function startGame(seed) {
     for (let i = bombs.length - 1; i >= 0; i--) {
       const b = bombs[i];
       b.t -= dt;
-      b.g.alpha = Math.sin(b.t * 18) > 0 ? 1 : 0.4; // parpadea
+      // parpadea cada vez más rápido antes de explotar
+      const freq = b.t < 0.6 ? 34 : 18;
+      b.g.alpha = Math.sin(b.t * freq) > 0 ? 1 : 0.35;
       if (b.t > 0) continue;
 
       const x = (b.cx + 0.5) * CELL;
       const y = (b.cy + 0.5) * CELL;
-      applyDig(b.cx, b.cy, DYNAMITE.radius, DYNAMITE.power, 'bomb');
-      particles.spawn(x, y, 0xff9f1c, 30, 2.2); // fuego
-      particles.spawn(x, y, 0xffe066, 15, 1.6);
-      shake = 9;
+      applyDig(shapeCells('circle', b.cx, b.cy, DYNAMITE.radius), DYNAMITE.power, 'bomb', b.cx, b.cy);
+      effects.spawnExplosion(x, y, DYNAMITE.radius * CELL);
+      particles.spawn(x, y, 0xff9f1c, 34, 2.3); // fuego
+      particles.spawn(x, y, 0xffe066, 18, 1.7);
+      particles.spawn(x, y, 0x4a4a52, 14, 1.3); // escombros oscuros
+      shake = 10;
       b.g.destroy();
       bombs.splice(i, 1);
     }
+  }
+
+  // Láser (tecla F): un rayo recto hacia el cursor, hecho con raycasting sobre la grilla
+  function fireLaser() {
+    const pierce = laserPierce(stats);
+    if (pierce === 0) { say('Todavía no tenés el láser. Comprálo en la tienda', 2); return; }
+    if (laserCooldown > 0) return;
+    if (player.fuel < LASER.fuel) { say('Sin combustible para el láser', 1.5); return; }
+
+    const ox = player.x + player.w / 2;
+    const oy = player.y + player.h * 0.4;
+    let dx = input.mouseX + camX - ox;
+    let dy = input.mouseY + camY - oy;
+    const d = Math.hypot(dx, dy);
+    if (d < 1) return;
+    dx /= d;
+    dy /= d;
+
+    player.fuel -= LASER.fuel;
+    laserCooldown = LASER.cooldown;
+    const t = performance.now();
+    const res = laser(world, delta, chunks, ox / CELL, oy / CELL, dx, dy, pierce, LASER.range, digPower(stats), breakParticles(1.4));
+
+    const ex = ((res.last % COLS) + 0.5) * CELL;
+    const ey = (Math.floor(res.last / COLS) + 0.5) * CELL;
+    effects.spawnLaser(ox, oy, ex, ey, stats.levels.laser);
+    particles.spawn(ex, ey, 0xff9f1c, 8, 1.2);
+    shake = Math.max(shake, 2.5);
+
+    afterDig(res, 'Láser', res.hitCells, performance.now() - t, res.last % COLS, Math.floor(res.last / COLS));
   }
 
   // ---------- Simulación del terreno ----------
@@ -293,10 +355,17 @@ function startGame(seed) {
     } else if (e.code === 'KeyM') {
       const big = minimap.toggleSize();
       debug.log(`Minimapa ${big ? 'grande' : 'normal'}`);
+    } else if (e.code === 'KeyQ') {
+      if (availableShapes(stats).length === 1) say('Comprá "Formas del pico" en la tienda', 2);
+      else say(`Forma: ${SHAPE_NAMES[cycleShape(stats)]}`, 1.5);
+    } else if (e.code === 'KeyF') {
+      fireLaser();
     } else if (e.code === 'KeyE') {
       if (panel.isOpen) panel.close();
       else if (near) panel.open();
       else say('Acercate a la tienda para abrirla', 1.5);
+    } else if (e.code === 'Digit0') {
+      panel.sellAll();
     } else if (/^Digit[1-9]$/.test(e.code)) {
       panel.buy(Number(e.code.slice(5)) - 1);
     }
@@ -311,22 +380,23 @@ function startGame(seed) {
     const pcy = Math.floor((player.y + player.h / 2) / CELL);
     const inWorld = tcx >= 0 && tcy >= 0 && tcx < COLS && tcy < ROWS;
     const mouseType = inWorld ? world[tcy * COLS + tcx] : 0;
+    const mouseBiome = inWorld ? BIOME_NAMES[biomes[tcy * COLS + tcx]] : '-';
     let deltaCells = 0;
     for (const m of delta.values()) deltaCells += m.size;
     const ss = sim.stats;
     return [
-      `Seed: ${seed}   Mundo: ${COLS}x${ROWS} celdas (${CHUNKS_X}x${CHUNKS_Y} chunks de ${CHUNK})`,
+      `Seed: ${seed}   Mundo ${SIZES[sizeKey].name}: ${COLS}x${ROWS} celdas (${CHUNKS_X}x${CHUNKS_Y} chunks de ${CHUNK})`,
       `Jugador: celda (${pcx}, ${pcy})  vel (${Math.round(player.vx)}, ${Math.round(player.vy)}) px/s`,
       `  suelo: ${player.onGround ? 'sí' : 'no'}  vuelo: ${player.flying ? 'sí' : 'no'}  combustible: ${player.fuel.toFixed(0)}/${player.fuelMax}`,
       `  chunk: #${chunkIndexOf(pcx, pcy)}`,
-      `Mouse: celda (${tcx}, ${tcy})  ${NAMES[mouseType]}  dureza ${HARDNESS[mouseType] ?? 0}  ${inReach ? 'al alcance' : 'lejos'}`,
+      `Mouse: celda (${tcx}, ${tcy})  ${NAMES[mouseType]}  dureza ${HARDNESS[mouseType] ?? 0}  bioma ${mouseBiome}  ${inReach ? 'al alcance' : 'lejos'}`,
       `Chunks visibles: ${chunks.visibleCount} de ${chunks.total}   redibujos totales: ${rebuiltTotal}`,
       `Último redibujo: ${lastRebuild.n} chunk(s) en ${lastRebuild.ms.toFixed(2)} ms`,
       `Delta: ${deltaCells} celdas cambiadas en ${delta.size} chunk(s)`,
       `Simulación: ${ss.steps} pasos, chunks activos ${ss.activeChunks}, revisadas ${ss.examined}, movidas ${ss.moved}, ${ss.ms.toFixed(2)} ms`,
       `  pendientes ${sim.pendingCount} chunk(s), movidas en total ${ss.totalMoved}, modo visual (V): ${simView ? 'sí' : 'no'}`,
       `Dinamitas activas: ${bombs.length}   partículas: ${particles.count}`,
-      `Pico: radio ${digRadius(stats)}, poder ${digPower(stats)}   mochila ${cargoTotal()}/${bagMax(stats)}`,
+      `Pico: ${SHAPE_NAMES[stats.shape]}, radio ${digRadius(stats)}, poder ${digPower(stats)}, fortuna ${Math.round(fortuneChance(stats) * 100)}%, láser ${laserPierce(stats)} celdas`,
     ];
   };
 
@@ -337,33 +407,47 @@ function startGame(seed) {
 
     player.fuelMax = fuelMax(stats);
     updatePlayer(world, player, input, dt);
-    playerSprite.position.set(player.x, player.y);
-    flame.visible = player.flying;
-    flame.position.set(player.x + player.w * 0.25, player.y + player.h);
     updateCamera(worldLayer, app.screen, player);
 
-    const camX = -worldLayer.x;
-    const camY = -worldLayer.y;
+    camX = -worldLayer.x;
+    camY = -worldLayer.y;
     chunks.updateVisibility(camX, camY, app.screen.width, app.screen.height);
 
     // mouse en coordenadas del mundo
     tcx = Math.floor((input.mouseX + camX) / CELL);
     tcy = Math.floor((input.mouseY + camY) / CELL);
-    const targetX = (tcx + 0.5) * CELL;
-    const targetY = (tcy + 0.5) * CELL;
     const pcx = player.x + player.w / 2;
     const pcy = player.y + player.h / 2;
-    inReach = Math.hypot(targetX - pcx, targetY - pcy) <= DIG_REACH * CELL;
+    inReach = Math.hypot((tcx + 0.5) * CELL - pcx, (tcy + 0.5) * CELL - pcy) <= DIG_REACH * CELL;
 
+    // forma del golpe: la vista previa muestra exactamente las celdas que va a romper
     const radius = digRadius(stats);
-    if (radius !== cursorRadius) { cursorRadius = radius; drawCursor(); }
-    cursor.position.set(targetX, targetY);
-    cursor.alpha = inReach ? 0.9 : 0.25;
+    const cells = shapeCells(stats.shape, tcx, tcy, radius, Math.floor(pcx / CELL), Math.floor(pcy / CELL));
+    const usable = stats.shape === 'cone' || inReach; // el cono sale del jugador y no necesita alcance
+
+    updatePlayerSprite(playerSprite, player, input.mouseX + camX, input.mouseDown && usable, stats.levels, dt);
+
+    // humo del jetpack mientras vuela
+    if (player.flying) {
+      smokeTimer -= dt;
+      if (smokeTimer <= 0) {
+        const nozzle = playerSprite.getNozzlePos();
+        effects.spawnJetpackSmoke(nozzle.x, nozzle.y);
+        smokeTimer = 0.04;
+      }
+    }
+
+    preview.clear();
+    for (const i of cells) {
+      const x = i % COLS;
+      preview.rect(x * CELL, ((i - x) / COLS) * CELL, CELL, CELL);
+    }
+    if (cells.length) preview.fill({ color: 0xffffff, alpha: usable ? 0.28 : 0.1 });
 
     // click izquierdo: cavar. Click derecho: dinamita
     digTimer -= dt;
-    if (input.mouseDown && inReach && digTimer <= 0) {
-      applyDig(tcx, tcy, radius, digPower(stats), 'dig');
+    if (input.mouseDown && usable && digTimer <= 0) {
+      applyDig(cells, digPower(stats), 'dig', tcx, tcy);
       digTimer = DIG_DELAY;
     }
     if (input.consumeRight()) {
@@ -371,6 +455,8 @@ function startGame(seed) {
       else say('Muy lejos para colocar dinamita', 1.5);
     }
     updateBombs(dt);
+
+    laserCooldown -= dt;
 
     // simulación a paso fijo (máximo 2 pasos por frame para no trabar el juego)
     simAcc += dt;
@@ -382,23 +468,39 @@ function startGame(seed) {
     }
     if (simAcc > SIM_STEP) simAcc = 0;
 
-    // en la tienda: vender todo y llenar el combustible
+    // en la tienda: depositar la mochila en el almacén y llenar el combustible
     near = Math.hypot(pcx - shopX, pcy - shopY) <= SELL_RANGE * CELL;
     if (near) {
       player.fuel = player.fuelMax;
-      let earned = 0;
-      for (const t in cargo) { earned += cargo[t] * ORE_VALUE[t]; cargo[t] = 0; }
-      if (earned > 0) {
-        stats.money += earned;
-        say(`¡Vendiste todo por $${earned}!`);
-        debug.log(`Venta: $${earned} (dinero $${stats.money})`);
+      let n = 0;
+      let val = 0;
+      for (const t in cargo) {
+        stats.stash[t] += cargo[t];
+        n += cargo[t];
+        val += cargo[t] * ORE_VALUE[t];
+        cargo[t] = 0;
+      }
+      if (n > 0) {
+        say(`Depositaste ${n} minerales en el almacén`);
+        floatingTexts.spawn(shopX, shopY - 26, `+${n} al almacén ($${val})`, 0x7ae582);
+        debug.log(`Depósito: ${n} minerales (almacén ${stashCount(stats)}, vale $${stashValue(stats)})`);
         panel.render();
       }
     } else if (panel.isOpen) {
       panel.close();
     }
 
+    particles.updateAmbient(dt, {
+      camX, camY,
+      screenW: app.screen.width,
+      screenH: app.screen.height,
+      world,
+      biomes,
+      startRow,
+    });
     particles.update(dt);
+    effects.update(dt);
+    floatingTexts.update(dt);
     if (simView) drawSimView(dt);
 
     // redibujar solo los chunks modificados y repintarlos en el minimapa
@@ -422,9 +524,9 @@ function startGame(seed) {
 
     // meta
     const depth = Math.max(0, Math.floor((player.y + player.h - startY) / CELL));
-    if (!won && depth >= GOAL_DEPTH) {
+    if (!won && depth >= GOAL) {
       won = true;
-      showBanner(`¡Llegaste a ${GOAL_DEPTH} m en ${mmss(playTime)}! Podés seguir explorando`);
+      showBanner(`¡Llegaste a ${GOAL} m en ${mmss(playTime)}! Podés seguir explorando`);
       debug.log(`Meta alcanzada en ${mmss(playTime)}`);
     }
 
@@ -433,18 +535,25 @@ function startGame(seed) {
     if (msgTimer <= 0) msg = '';
     bannerTimer -= dt;
     if (bannerTimer <= 0) bannerEl.style.display = 'none';
-    const bag = Object.keys(cargo).map((t) => `${ORE_NAME[t]} ${cargo[t]}`).join(' · ');
+    const bag = Object.keys(cargo).filter((t) => cargo[t] > 0).map((t) => `${ORE_NAME[t]} ${cargo[t]}`).join(' · ');
     const bars = Math.round((player.fuel / player.fuelMax) * 10);
     const fuelBar = '█'.repeat(bars) + '░'.repeat(10 - bars);
+    const pbx = Math.floor(pcx / CELL);
+    const pby = Math.floor(pcy / CELL);
+    const biome = pbx >= 0 && pby >= 0 && pbx < COLS && pby < ROWS ? BIOME_NAMES[biomes[pby * COLS + pbx]] : '-';
     const hud = [
-      `Seed: ${seed}`,
-      `Profundidad: ${depth} m de ${GOAL_DEPTH} m${won ? ' (lograda)' : ''}`,
+      `Seed: ${seed} · ${SIZES[sizeKey].name}`,
+      `Bioma: ${biome}`,
+      `Profundidad: ${depth} m de ${GOAL} m${won ? ' (lograda)' : ''}`,
       `Tiempo: ${mmss(playTime)}`,
       `Dinero: $${stats.money}`,
-      `Mochila (${cargoTotal()}/${bagMax(stats)}): ${bag}`,
+      `Almacén: ${stashCount(stats)} minerales ($${stashValue(stats)})`,
+      `Mochila (${cargoTotal()}/${bagMax(stats)}): ${bag || 'vacía'}`,
       `Combustible: ${fuelBar}`,
       `Dinamita: ${stats.dynamite}`,
-      near ? 'Apretá E para abrir la tienda' : '',
+      availableShapes(stats).length > 1 ? `Forma: ${SHAPE_NAMES[stats.shape]} (Q cambia)` : '',
+      laserPierce(stats) > 0 ? `Láser: F (rompe ${laserPierce(stats)} celdas)` : '',
+      near ? 'Apretá E para vender y mejorar' : '',
       msg,
     ].filter(Boolean).join('\n');
     if (hud !== lastHud) { hudEl.textContent = hud; lastHud = hud; }
@@ -485,9 +594,10 @@ function startGame(seed) {
 function play() {
   if (currentGame) return;
   const seed = seedFromText(seedInput.value);
+  const sizeKey = sizeSelect.value || 'medium';
   seedInput.blur();
   menuEl.style.display = 'none';
-  currentGame = startGame(seed);
+  currentGame = startGame(seed, sizeKey);
 }
 
 function backToMenu() {

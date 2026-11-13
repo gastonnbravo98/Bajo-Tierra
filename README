@@ -1,9 +1,68 @@
-Unidades utilizadas: 
-Unidad 1 (Mundos procedurales 2D/3D)
-Unidad 7 (Terreno destructible)
+# Bajo Tierra
 
-1. Concepto
-El juego combina la generación de mapas infinitos/orgánicos (Unidad 1) con la física e interacción de un entorno completamente moldeable y destructible en tiempo real (Unidad 7). El mundo no es estático: la topografía generada algorítmicamente reacciona a explosiones, excavaciones y colisiones, modificando la navegación del jugador y las mecánicas de juego de forma dinámica. 
-2. Idea Principal
-El juego se enfoca 100% en sus mecánicas jugables. Cada vez que inicias una nueva partida (o ingresas un código de mapa), el subsuelo se genera automáticamente de forma totalmente única. Nunca jugarás en el mismo mapa dos veces. 
-Géneros de referencia: Motherload, SteamWorld Dig, Terraria 
+Bajo Tierra es un juego de excavación y supervivencia en un mundo generado proceduralmente por seed, donde el terreno no es un fondo estático sino un sistema dinámico que se destruye, derrumba y reconfigura a medida que avanzás. La idea central del proyecto combina la generación orgánica de mundos con la destrucción en tiempo real del entorno, creando partidas siempre distintas.
+
+## Concepto
+
+El juego toma como base dos grandes ideas:
+
+- Unidad 1: mundos procedurales 2D
+- Unidad 7: terreno destructible
+
+La topografía se genera automáticamente cada vez que se inicia una partida, con una seed configurable o aleatoria. A medida que el jugador cava, rompe bloques, coloca dinamita y avanza más profundo, el mapa cambia de forma real y afecta la navegación, la progresión y el riesgo del entorno.
+
+## Idea principal
+
+Bajo Tierra se enfoca en sus mecánicas jugables por encima de cualquier otra cosa:
+
+- cada partida genera un subsuelo único
+- no repetís el mismo mapa en dos partidas
+- el mundo responde físicamente a explosiones, excavaciones y colisiones
+- la progresión depende de cavar, recolectar minerales y mejorar herramientas
+
+## Géneros de referencia
+
+- Motherload
+- SteamWorld Dig
+- Terraria
+
+## Objetivo del juego
+
+El objetivo es llegar cada vez más profundo, conseguir recursos valiosos, venderlos en la tienda, mejorar el equipo y avanzar hasta alcanzar la meta del mapa. La exploración no es solo horizontal: también se trata de gestionar riesgos, combustible, herramientas y la forma en que se destruye el terreno.
+
+## Características
+
+- Generación procedural del mundo
+- Terreno escalable y destructible en tiempo real
+- Minerales, recursos y sistema de inventario
+- Tienda con mejoras de equipamiento
+- Dinamita y láser como herramientas de interacción
+- Minimap y HUD para información del jugador
+- Seed personalizada para reproducir mapas específicos
+- Variantes de tamaño de mundo: pequeño, mediano y grande
+
+## Controles
+
+- A / D: mover al jugador
+- Espacio: saltar y mantener el aire para volar
+- Click izquierdo: cavar
+- Click derecho: colocar dinamita
+- Q: cambiar forma del pico
+- F: activar láser
+- E: abrir tienda
+- M: mostrar/minimizar minimapa
+- U: depuración
+- V: simulación del terreno
+- Esc: volver al menú
+
+## Tecnologías
+
+- HTML5
+- JavaScript
+- PixiJS para renderizado 2D
+- Generación procedural de mapas
+
+## Estado del proyecto
+
+Proyecto en desarrollo, orientado a una experiencia de juego de excavación con fuerte énfasis en la destrucción del entorno y la rejugabilidad procedural.
+
