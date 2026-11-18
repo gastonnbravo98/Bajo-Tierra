@@ -40,27 +40,57 @@
       font-family: sans-serif;
     }
     #pause-menu .pause-box {
-      display: flex; flex-direction: column; gap: 8px; width: 300px;
+      display: flex; flex-direction: column; gap: 8px; width: 310px;
       padding: 20px; background: var(--panel); color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 8px;
       box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
     }
     #pause-menu h2 { margin: 0; font-size: 26px; text-align: center; color: var(--gold); }
-    #pause-menu p { margin: 0 0 8px; font-size: 13px; text-align: center; color: var(--muted); }
+    #pause-menu p { margin: 0 0 6px; font-size: 13px; text-align: center; color: var(--muted); }
     #pause-menu button {
-      width: 100%; padding: 10px 12px; font-size: 15px; cursor: pointer;
+      width: 100%; padding: 9px 12px; font-size: 14px; cursor: pointer;
       background: #4a2f1c; color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 4px;
     }
     #pause-menu button:hover { background: #6a4326; }
     #pause-menu button.primary {
-      background: #2e9e4f; border-color: #38b95e; color: #fff; font-weight: 600;
+      background: #2e9e4f; border-color: #38b95e; color: #fff; font-weight: 600; font-size: 15px;
     }
     #pause-menu button.primary:hover { background: #38b95e; }
     #pause-menu button.danger {
       margin-top: 4px; background: #5c2323; border-color: #8a3636; color: #ffd6d6;
     }
     #pause-menu button.danger:hover { background: #7a2e2e; }
+
+    /* Controles de audio en pausa */
+    .audio-panel {
+      display: flex; flex-direction: column; gap: 8px;
+      padding: 10px; background: rgba(20, 12, 8, 0.55);
+      border: 1px solid #5c3a21; border-radius: 6px;
+    }
+    .volume-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      font-size: 13px; color: var(--text);
+    }
+    .volume-row input[type="range"] {
+      flex: 1; accent-color: var(--gold); cursor: pointer; height: 6px;
+    }
+    .audio-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; background: #3b2415; border: 1px solid var(--panel-border);
+      border-radius: 4px; cursor: pointer; user-select: none; font-size: 14px;
+    }
+    .audio-toggle:hover { background: #52321e; }
+    .audio-toggle .check-square {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 4px;
+      background: #1d110a; border: 2px solid var(--gold);
+      color: #ff6b6b; font-size: 15px; font-weight: bold; line-height: 1;
+    }
+    .audio-toggle.muted .check-square {
+      border-color: #ff6b6b;
+      background: #3a1616;
+    }
 
     /* HUD y panel de debug */
     #hud, #debug {
@@ -69,7 +99,7 @@
       border: 1px solid var(--panel-border); border-radius: 6px;
       font: 11px/1.45 monospace; pointer-events: none;
     }
-    #hud { top: 12px; left: 12px; min-width: 215px; }
+    #hud { top: 12px; left: 12px; }
     #hud .hud-line { white-space: nowrap; }
     #hud .hud-msg { color: var(--gold); font-weight: bold; margin-top: 2px; }
     #hud .hud-warn { color: #ff6b6b; font-weight: bold; margin-top: 2px; }
@@ -165,7 +195,7 @@
     </select>
     <button id="play-btn">Jugar</button>
     <p id="last-seed"></p>
-    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · Q forma del pico · F láser · E tienda · M minimapa · U depuración · V simulación · Esc pausa</p>
+    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · Q forma del pico · F láser · E tienda · M minimapa · N silenciar · U depuración · V simulación · Esc pausa</p>
   </div>
 
   <div id="pause-menu">
@@ -173,6 +203,22 @@
       <h2>Pausa</h2>
       <p id="pause-info"></p>
       <button id="btn-resume" class="primary">Continuar</button>
+
+      <div class="audio-panel">
+        <div class="volume-row">
+          <span id="volume-label">Volumen: 80%</span>
+          <input id="volume-slider" type="range" min="0" max="100" value="80" aria-label="Volumen">
+        </div>
+        <div id="toggle-music" class="audio-toggle" role="checkbox" aria-checked="false" tabindex="0">
+          <span>Música de fondo</span>
+          <span id="box-music" class="check-square"></span>
+        </div>
+        <div id="toggle-sfx" class="audio-toggle" role="checkbox" aria-checked="false" tabindex="0">
+          <span>Efectos de sonido</span>
+          <span id="box-sfx" class="check-square"></span>
+        </div>
+      </div>
+
       <button id="btn-copy-seed">Copiar seed</button>
       <button id="btn-toggle-debug">Depuración (U): Desactivada</button>
       <button id="btn-toggle-sim">Vista simulación (V): Desactivada</button>

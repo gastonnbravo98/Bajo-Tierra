@@ -23,6 +23,7 @@ import {
 } from './src/shop.js';
 import { createDebug, mmss } from './src/debug.js';
 import { input } from './src/input.js';
+import { sound } from './src/sound.js';
 
 const menuEl = document.getElementById('menu');
 const seedInput = document.getElementById('seed-input');
@@ -37,6 +38,12 @@ const bannerEl = document.getElementById('banner');
 const pauseEl = document.getElementById('pause-menu');
 const pauseInfoEl = document.getElementById('pause-info');
 const btnResume = document.getElementById('btn-resume');
+const volumeLabel = document.getElementById('volume-label');
+const volumeSlider = document.getElementById('volume-slider');
+const toggleMusicEl = document.getElementById('toggle-music');
+const boxMusicEl = document.getElementById('box-music');
+const toggleSfxEl = document.getElementById('toggle-sfx');
+const boxSfxEl = document.getElementById('box-sfx');
 const btnCopySeed = document.getElementById('btn-copy-seed');
 const btnToggleDebug = document.getElementById('btn-toggle-debug');
 const btnToggleSim = document.getElementById('btn-toggle-sim');
@@ -140,6 +147,8 @@ function startGame(seed, sizeKey) {
   let lastActiveChunks = [];
   let lastActiveTime = -99;
 
+  sound.startMusic();
+
   const say = (text, secs = 2.5) => { msg = text; msgTimer = secs; };
   const showBanner = (text, secs = 8) => {
     bannerEl.textContent = text;
@@ -150,18 +159,32 @@ function startGame(seed, sizeKey) {
   function alertNoFuel(text = '¡Sin combustible!') {
     floatingTexts.spawn(player.x + player.w / 2, player.y - 6, text, 0xff5252);
     say('¡Sin combustible!', 1.5);
+    sound.noFuel();
     noFuelAlertTimer = 1.2;
   }
 
   const panel = createShopPanel(shopEl, stats, (text) => {
     say(text);
     debug.log(text);
+    sound.coin();
     floatingTexts.spawn(shopX, shopY - 26, text, 0xffe066);
   });
 
   // ---------- Menú de pausa ----------
   function syncPauseLabels() {
     pauseInfoEl.textContent = `Seed: ${seed} · Mundo ${SIZES[sizeKey].name} · Tiempo: ${mmss(playTime)}`;
+    const pct = Math.round(sound.volume * 100);
+    volumeLabel.textContent = `Volumen: ${pct}%`;
+    volumeSlider.value = String(pct);
+
+    toggleMusicEl.classList.toggle('muted', sound.musicMuted);
+    toggleMusicEl.setAttribute('aria-checked', String(sound.musicMuted));
+    boxMusicEl.textContent = sound.musicMuted ? '✕' : '';
+
+    toggleSfxEl.classList.toggle('muted', sound.sfxMuted);
+    toggleSfxEl.setAttribute('aria-checked', String(sound.sfxMuted));
+    boxSfxEl.textContent = sound.sfxMuted ? '✕' : '';
+
     btnCopySeed.textContent = 'Copiar seed';
     btnToggleDebug.textContent = `Depuración (U): ${debugOn ? 'Activada' : 'Desactivada'}`;
     btnToggleSim.textContent = `Vista simulación (V): ${simView ? 'Activada' : 'Desactivada'}`;
@@ -171,6 +194,7 @@ function startGame(seed, sizeKey) {
   function setPaused(value) {
     paused = value;
     if (paused) {
+      sound.stopJetpack();
       syncPauseLabels();
       pauseEl.style.display = 'flex';
     } else {
@@ -179,6 +203,18 @@ function startGame(seed, sizeKey) {
   }
 
   btnResume.onclick = () => setPaused(false);
+  volumeSlider.oninput = () => {
+    sound.setVolume(Number(volumeSlider.value) / 100);
+    volumeLabel.textContent = `Volumen: ${volumeSlider.value}%`;
+  };
+  toggleMusicEl.onclick = () => {
+    sound.toggleMusic();
+    syncPauseLabels();
+  };
+  toggleSfxEl.onclick = () => {
+    sound.toggleSfx();
+    syncPauseLabels();
+  };
   btnCopySeed.onclick = () => {
     navigator.clipboard?.writeText(String(seed));
     btnCopySeed.textContent = '¡Seed copiada!';
@@ -264,6 +300,20 @@ function startGame(seed, sizeKey) {
     const res = digCells(world, delta, chunks, cells, power, breakParticles(isBomb ? 1.8 : 1));
     const label = isBomb ? 'Explosión' : `Cavó (${SHAPE_NAMES[stats.shape]})`;
     afterDig(res, label, cells, performance.now() - t, cx, cy);
+
+    if (!isBomb) {
+      if (res.count > 0) {
+        let maxH = 1;
+        let hasOre = false;
+        for (const type in res.broken) {
+          maxH = Math.max(maxH, HARDNESS[type] ?? 1);
+          if (type in cargo) hasOre = true;
+        }
+        sound.dig(maxH, hasOre);
+      } else if (res.blocked > 0) {
+        sound.blocked();
+      }
+    }
     return res;
   }
 
@@ -274,6 +324,7 @@ function startGame(seed, sizeKey) {
     g.position.set((cx + 0.5) * CELL, (cy + 0.5) * CELL);
     worldLayer.addChild(g);
     bombs.push({ cx, cy, t: DYNAMITE.fuse, g });
+    sound.bombPlace();
     debug.log(`Dinamita colocada en (${cx}, ${cy}), explota en ${DYNAMITE.fuse} s`);
   }
 
@@ -289,6 +340,7 @@ function startGame(seed, sizeKey) {
       const x = (b.cx + 0.5) * CELL;
       const y = (b.cy + 0.5) * CELL;
       applyDig(shapeCells('circle', b.cx, b.cy, DYNAMITE.radius), DYNAMITE.power, 'bomb', b.cx, b.cy);
+      sound.explosion();
       effects.spawnExplosion(x, y, DYNAMITE.radius * CELL);
       particles.spawn(x, y, 0xff9f1c, 34, 2.3); // fuego
       particles.spawn(x, y, 0xffe066, 18, 1.7);
@@ -325,6 +377,7 @@ function startGame(seed, sizeKey) {
 
     const ex = ((res.last % COLS) + 0.5) * CELL;
     const ey = (Math.floor(res.last / COLS) + 0.5) * CELL;
+    sound.laser();
     effects.spawnLaser(ox, oy, ex, ey, stats.levels.laser);
     particles.spawn(ex, ey, 0xff9f1c, 8, 1.2);
     shake = Math.max(shake, 2.5);
@@ -411,6 +464,9 @@ function startGame(seed, sizeKey) {
       debug.log(`Persistencia (R): seed + delta vs mundo actual = ${diff} celdas distintas`);
       world.set(fresh);
       chunks.markAllDirty();
+    } else if (e.code === 'KeyN') {
+      const m = sound.toggleSfx();
+      say(m ? 'Efectos silenciados' : 'Efectos activados', 1.2);
     } else if (e.code === 'KeyU') {
       debugOn = debug.toggle();
     } else if (e.code === 'KeyV') {
@@ -475,6 +531,7 @@ function startGame(seed, sizeKey) {
     player.fuelMax = fuelMax(stats);
     updatePlayer(world, player, input, dt);
     updateCamera(worldLayer, app.screen, player);
+    sound.setJetpack(player.flying);
 
     // aviso al quedarse sin combustible o al intentar volar con el tanque vacío
     noFuelAlertTimer -= dt;
@@ -560,6 +617,7 @@ function startGame(seed, sizeKey) {
       }
       if (n > 0) {
         say(`Depositaste ${n} minerales en el almacén`);
+        sound.deposit();
         floatingTexts.spawn(shopX, shopY - 26, `+${n} al almacén ($${val})`, 0x7ae582);
         debug.log(`Depósito: ${n} minerales (almacén ${stashCount(stats)}, vale $${stashValue(stats)})`);
         panel.render();
@@ -604,6 +662,7 @@ function startGame(seed, sizeKey) {
     const depth = Math.max(0, Math.floor((player.y + player.h - startY) / CELL));
     if (!won && depth >= GOAL) {
       won = true;
+      sound.goal();
       showBanner(`¡Llegaste a ${GOAL} m en ${mmss(playTime)}! Podés seguir explorando`);
       debug.log(`Meta alcanzada en ${mmss(playTime)}`);
     }
@@ -668,6 +727,8 @@ function startGame(seed, sizeKey) {
       setPaused(!paused);
     },
     stop() {
+      sound.stopJetpack();
+      sound.stopMusic();
       app.ticker.remove(tick);
       window.removeEventListener('keydown', onKey);
       app.stage.removeChild(worldLayer);
