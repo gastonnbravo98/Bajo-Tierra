@@ -34,6 +34,16 @@ const debugEl = document.getElementById('debug');
 const shopEl = document.getElementById('shop');
 const bannerEl = document.getElementById('banner');
 
+const pauseEl = document.getElementById('pause-menu');
+const pauseInfoEl = document.getElementById('pause-info');
+const btnResume = document.getElementById('btn-resume');
+const btnCopySeed = document.getElementById('btn-copy-seed');
+const btnToggleDebug = document.getElementById('btn-toggle-debug');
+const btnToggleSim = document.getElementById('btn-toggle-sim');
+const btnToggleMap = document.getElementById('btn-toggle-map');
+const btnRestart = document.getElementById('btn-restart');
+const btnExit = document.getElementById('btn-exit');
+
 let app;
 let currentGame = null;
 let debugOn = false; // se mantiene al volver al menú y jugar de nuevo
@@ -96,6 +106,7 @@ function startGame(seed, sizeKey) {
   worldLayer.addChild(preview);
 
   const minimap = createMinimap(world);
+  let bigMap = false;
 
   // mochila: una cuenta por cada tipo de mineral
   const cargo = {};
@@ -103,12 +114,15 @@ function startGame(seed, sizeKey) {
   const cargoTotal = () => Object.values(cargo).reduce((a, b) => a + b, 0);
 
   // estado de la partida
+  let paused = false;
   let msg = '';
   let msgTimer = 0;
   let bannerTimer = 0;
   let digTimer = 0;
   let laserCooldown = 0;
   let smokeTimer = 0;
+  let noFuelAlertTimer = 0;
+  let wasFuelEmpty = false;
   let lastHud = '';
   let playTime = 0;
   let won = false;
@@ -133,11 +147,59 @@ function startGame(seed, sizeKey) {
     bannerTimer = secs;
   };
 
+  function alertNoFuel(text = '¡Sin combustible!') {
+    floatingTexts.spawn(player.x + player.w / 2, player.y - 6, text, 0xff5252);
+    say('¡Sin combustible!', 1.5);
+    noFuelAlertTimer = 1.2;
+  }
+
   const panel = createShopPanel(shopEl, stats, (text) => {
     say(text);
     debug.log(text);
     floatingTexts.spawn(shopX, shopY - 26, text, 0xffe066);
   });
+
+  // ---------- Menú de pausa ----------
+  function syncPauseLabels() {
+    pauseInfoEl.textContent = `Seed: ${seed} · Mundo ${SIZES[sizeKey].name} · Tiempo: ${mmss(playTime)}`;
+    btnCopySeed.textContent = 'Copiar seed';
+    btnToggleDebug.textContent = `Depuración (U): ${debugOn ? 'Activada' : 'Desactivada'}`;
+    btnToggleSim.textContent = `Vista simulación (V): ${simView ? 'Activada' : 'Desactivada'}`;
+    btnToggleMap.textContent = `Minimapa (M): ${bigMap ? 'Grande' : 'Normal'}`;
+  }
+
+  function setPaused(value) {
+    paused = value;
+    if (paused) {
+      syncPauseLabels();
+      pauseEl.style.display = 'flex';
+    } else {
+      pauseEl.style.display = 'none';
+    }
+  }
+
+  btnResume.onclick = () => setPaused(false);
+  btnCopySeed.onclick = () => {
+    navigator.clipboard?.writeText(String(seed));
+    btnCopySeed.textContent = '¡Seed copiada!';
+  };
+  btnToggleDebug.onclick = () => {
+    debugOn = debug.toggle();
+    syncPauseLabels();
+  };
+  btnToggleSim.onclick = () => {
+    simView = !simView;
+    if (!simView) { heat.clear(); simGfx.clear(); }
+    debug.log(`Modo simulación ${simView ? 'activado' : 'desactivado'}`);
+    syncPauseLabels();
+  };
+  btnToggleMap.onclick = () => {
+    bigMap = minimap.toggleSize();
+    debug.log(`Minimapa ${bigMap ? 'grande' : 'normal'}`);
+    syncPauseLabels();
+  };
+  btnRestart.onclick = () => restartGame(seed, sizeKey);
+  btnExit.onclick = () => backToMenu();
 
   // ---------- Cavar, explotar y disparar (Unidad 7) ----------
   // guarda en la mochila lo que entre (con fortuna); el resto se pierde. Los cristales recargan combustible.
@@ -242,7 +304,10 @@ function startGame(seed, sizeKey) {
     const pierce = laserPierce(stats);
     if (pierce === 0) { say('Todavía no tenés el láser. Comprálo en la tienda', 2); return; }
     if (laserCooldown > 0) return;
-    if (player.fuel < LASER.fuel) { say('Sin combustible para el láser', 1.5); return; }
+    if (player.fuel < LASER.fuel) {
+      alertNoFuel('¡Sin combustible para láser!');
+      return;
+    }
 
     const ox = player.x + player.w / 2;
     const oy = player.y + player.h * 0.4;
@@ -334,7 +399,7 @@ function startGame(seed, sizeKey) {
 
   // ---------- Teclas de la partida ----------
   function onKey(e) {
-    if (e.target instanceof HTMLInputElement || e.repeat) return;
+    if (e.target instanceof HTMLInputElement || e.repeat || paused) return;
 
     if (e.code === 'KeyR') {
       // prueba de persistencia: seed + delta debe dar exactamente el mundo actual
@@ -353,8 +418,8 @@ function startGame(seed, sizeKey) {
       if (!simView) { heat.clear(); simGfx.clear(); }
       debug.log(`Modo simulación ${simView ? 'activado' : 'desactivado'}`);
     } else if (e.code === 'KeyM') {
-      const big = minimap.toggleSize();
-      debug.log(`Minimapa ${big ? 'grande' : 'normal'}`);
+      bigMap = minimap.toggleSize();
+      debug.log(`Minimapa ${bigMap ? 'grande' : 'normal'}`);
     } else if (e.code === 'KeyQ') {
       if (availableShapes(stats).length === 1) say('Comprá "Formas del pico" en la tienda', 2);
       else say(`Forma: ${SHAPE_NAMES[cycleShape(stats)]}`, 1.5);
@@ -402,12 +467,25 @@ function startGame(seed, sizeKey) {
 
   // ---------- Un frame ----------
   const tick = (ticker) => {
+    if (paused) return;
+
     const dt = Math.min(ticker.deltaMS / 1000, 1 / 30);
     playTime += dt;
 
     player.fuelMax = fuelMax(stats);
     updatePlayer(world, player, input, dt);
     updateCamera(worldLayer, app.screen, player);
+
+    // aviso al quedarse sin combustible o al intentar volar con el tanque vacío
+    noFuelAlertTimer -= dt;
+    if (player.fuel <= 0) {
+      if (!wasFuelEmpty || (input.jump && !player.onGround && noFuelAlertTimer <= 0)) {
+        alertNoFuel('¡Sin combustible!');
+      }
+      wasFuelEmpty = true;
+    } else {
+      wasFuelEmpty = false;
+    }
 
     camX = -worldLayer.x;
     camY = -worldLayer.y;
@@ -530,33 +608,43 @@ function startGame(seed, sizeKey) {
       debug.log(`Meta alcanzada en ${mmss(playTime)}`);
     }
 
-    // HUD (solo se toca el DOM si el texto cambió)
+    // HUD (solo se toca el DOM si el contenido cambió)
     msgTimer -= dt;
     if (msgTimer <= 0) msg = '';
     bannerTimer -= dt;
     if (bannerTimer <= 0) bannerEl.style.display = 'none';
     const bag = Object.keys(cargo).filter((t) => cargo[t] > 0).map((t) => `${ORE_NAME[t]} ${cargo[t]}`).join(' · ');
-    const bars = Math.round((player.fuel / player.fuelMax) * 10);
-    const fuelBar = '█'.repeat(bars) + '░'.repeat(10 - bars);
+    const fuelPct = Math.max(0, Math.min(100, (player.fuel / player.fuelMax) * 100));
+    const fuelCur = Math.ceil(player.fuel);
+    const fuelLow = fuelPct <= 25;
+    const fuelEmpty = fuelCur <= 0;
     const pbx = Math.floor(pcx / CELL);
     const pby = Math.floor(pcy / CELL);
     const biome = pbx >= 0 && pby >= 0 && pbx < COLS && pby < ROWS ? BIOME_NAMES[biomes[pby * COLS + pbx]] : '-';
-    const hud = [
-      `Seed: ${seed} · ${SIZES[sizeKey].name}`,
-      `Bioma: ${biome}`,
-      `Profundidad: ${depth} m de ${GOAL} m${won ? ' (lograda)' : ''}`,
-      `Tiempo: ${mmss(playTime)}`,
-      `Dinero: $${stats.money}`,
-      `Almacén: ${stashCount(stats)} minerales ($${stashValue(stats)})`,
-      `Mochila (${cargoTotal()}/${bagMax(stats)}): ${bag || 'vacía'}`,
-      `Combustible: ${fuelBar}`,
-      `Dinamita: ${stats.dynamite}`,
-      availableShapes(stats).length > 1 ? `Forma: ${SHAPE_NAMES[stats.shape]} (Q cambia)` : '',
-      laserPierce(stats) > 0 ? `Láser: F (rompe ${laserPierce(stats)} celdas)` : '',
-      near ? 'Apretá E para vender y mejorar' : '',
-      msg,
-    ].filter(Boolean).join('\n');
-    if (hud !== lastHud) { hudEl.textContent = hud; lastHud = hud; }
+
+    const lines = [
+      `<div class="hud-line">Seed: ${seed} · ${SIZES[sizeKey].name}</div>`,
+      `<div class="hud-line">Bioma: ${biome}</div>`,
+      `<div class="hud-line">Profundidad: ${depth} m de ${GOAL} m${won ? ' (lograda)' : ''}</div>`,
+      `<div class="hud-line">Tiempo: ${mmss(playTime)}</div>`,
+      `<div class="hud-line">Dinero: $${stats.money}</div>`,
+      `<div class="hud-line">Almacén: ${stashCount(stats)} minerales ($${stashValue(stats)})</div>`,
+      `<div class="hud-line">Mochila (${cargoTotal()}/${bagMax(stats)}): ${bag || 'vacía'}</div>`,
+      `<div class="fuel-row">` +
+        `<span>Combustible:</span>` +
+        `<div class="fuel-track${fuelEmpty ? ' empty' : ''}">` +
+          `<div class="fuel-fill${fuelLow ? ' low' : ''}" style="width:${fuelPct.toFixed(1)}%"></div>` +
+          `<span class="fuel-val">${fuelEmpty ? 'VACÍO' : `${fuelCur}/${player.fuelMax}`}</span>` +
+        `</div>` +
+      `</div>`,
+      `<div class="hud-line">Dinamita: ${stats.dynamite}</div>`,
+      availableShapes(stats).length > 1 ? `<div class="hud-line">Forma: ${SHAPE_NAMES[stats.shape]} (Q cambia)</div>` : '',
+      laserPierce(stats) > 0 ? `<div class="hud-line">Láser: F (rompe ${laserPierce(stats)} celdas)</div>` : '',
+      near ? `<div class="hud-line">Apretá E para vender y mejorar</div>` : '',
+      msg ? `<div class="${fuelEmpty ? 'hud-warn' : 'hud-msg'}">${msg}</div>` : '',
+    ].filter(Boolean).join('');
+
+    if (lines !== lastHud) { hudEl.innerHTML = lines; lastHud = lines; }
 
     debug.frame(dt, debugInfo);
 
@@ -576,6 +664,9 @@ function startGame(seed, sizeKey) {
       panel.close();
       return true;
     },
+    togglePause() {
+      setPaused(!paused);
+    },
     stop() {
       app.ticker.remove(tick);
       window.removeEventListener('keydown', onKey);
@@ -583,6 +674,7 @@ function startGame(seed, sizeKey) {
       worldLayer.destroy({ children: true });
       minimap.destroy();
       panel.close();
+      pauseEl.style.display = 'none';
       hudEl.style.display = 'none';
       debugEl.style.display = 'none';
       bannerEl.style.display = 'none';
@@ -597,6 +689,14 @@ function play() {
   const sizeKey = sizeSelect.value || 'medium';
   seedInput.blur();
   menuEl.style.display = 'none';
+  currentGame = startGame(seed, sizeKey);
+}
+
+function restartGame(seed, sizeKey) {
+  if (currentGame) {
+    currentGame.stop();
+    currentGame = null;
+  }
   currentGame = startGame(seed, sizeKey);
 }
 
@@ -617,7 +717,7 @@ async function init() {
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape' || !currentGame) return;
     if (currentGame.closePanel()) return; // Esc primero cierra la tienda
-    backToMenu();
+    currentGame.togglePause();
   });
 }
 

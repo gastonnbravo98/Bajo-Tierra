@@ -5,7 +5,7 @@
   <title>Bajo Tierra</title>
   <style>
     :root {
-      --panel: rgba(34, 21, 14, 0.82);
+      --panel: rgba(34, 21, 14, 0.88);
       --panel-border: #7a4e2d;
       --text: #f3e3c8;
       --muted: #b89c7a;
@@ -14,7 +14,7 @@
     html, body { margin: 0; height: 100%; overflow: hidden; background: #111; }
     canvas { display: block; }
 
-    /* Menú */
+    /* Menú principal */
     #menu {
       position: fixed; inset: 0; z-index: 10;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -32,15 +32,80 @@
     }
     #menu button:hover { background: #38b95e; }
 
+    /* Menú de pausa */
+    #pause-menu {
+      display: none; position: fixed; inset: 0; z-index: 9;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(12, 9, 7, 0.72); backdrop-filter: blur(2px);
+      font-family: sans-serif;
+    }
+    #pause-menu .pause-box {
+      display: flex; flex-direction: column; gap: 8px; width: 300px;
+      padding: 20px; background: var(--panel); color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+    }
+    #pause-menu h2 { margin: 0; font-size: 26px; text-align: center; color: var(--gold); }
+    #pause-menu p { margin: 0 0 8px; font-size: 13px; text-align: center; color: var(--muted); }
+    #pause-menu button {
+      width: 100%; padding: 10px 12px; font-size: 15px; cursor: pointer;
+      background: #4a2f1c; color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 4px;
+    }
+    #pause-menu button:hover { background: #6a4326; }
+    #pause-menu button.primary {
+      background: #2e9e4f; border-color: #38b95e; color: #fff; font-weight: 600;
+    }
+    #pause-menu button.primary:hover { background: #38b95e; }
+    #pause-menu button.danger {
+      margin-top: 4px; background: #5c2323; border-color: #8a3636; color: #ffd6d6;
+    }
+    #pause-menu button.danger:hover { background: #7a2e2e; }
+
     /* HUD y panel de debug */
     #hud, #debug {
-      display: none; position: fixed; z-index: 5; padding: 5px 8px;
+      display: none; position: fixed; z-index: 5; padding: 7px 10px;
       background: var(--panel); color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 6px;
-      font: 11px/1.4 monospace; white-space: pre; pointer-events: none;
+      font: 11px/1.45 monospace; pointer-events: none;
     }
-    #hud { top: 12px; left: 12px; }
-    #debug { bottom: 12px; left: 12px; font-size: 10px; line-height: 1.35; max-width: 60vw; overflow: hidden; }
+    #hud { top: 12px; left: 12px; min-width: 215px; }
+    #hud .hud-line { white-space: nowrap; }
+    #hud .hud-msg { color: var(--gold); font-weight: bold; margin-top: 2px; }
+    #hud .hud-warn { color: #ff6b6b; font-weight: bold; margin-top: 2px; }
+
+    /* Indicador visual de combustible */
+    #hud .fuel-row {
+      display: flex; align-items: center; gap: 6px; margin: 3px 0;
+    }
+    #hud .fuel-track {
+      position: relative; width: 72px; height: 11px;
+      background: #1a100a; border: 1px solid #5c3a21; border-radius: 3px; overflow: hidden;
+    }
+    #hud .fuel-fill {
+      height: 100%; background: linear-gradient(90deg, #e07a16, #ffcf5a);
+      transition: width 0.08s linear;
+    }
+    #hud .fuel-fill.low {
+      background: linear-gradient(90deg, #b82929, #ff6b35);
+    }
+    #hud .fuel-track.empty {
+      border-color: #ff5252;
+      animation: fuel-blink 0.65s infinite alternate;
+    }
+    #hud .fuel-val {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: bold; color: #fff; text-shadow: 0 1px 2px #000;
+    }
+    @keyframes fuel-blink {
+      from { box-shadow: 0 0 0 rgba(255, 82, 82, 0); }
+      to { box-shadow: 0 0 8px rgba(255, 82, 82, 0.75); }
+    }
+
+    #debug {
+      bottom: 12px; left: 12px; font-size: 10px; line-height: 1.35;
+      max-width: 60vw; overflow: hidden; white-space: pre;
+    }
 
     /* Minimapa: normal a la derecha, la tecla M lo agranda */
     #minimap {
@@ -100,8 +165,23 @@
     </select>
     <button id="play-btn">Jugar</button>
     <p id="last-seed"></p>
-    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · Q forma del pico · F láser · E tienda · M minimapa · U depuración · V simulación · Esc menú</p>
+    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · Q forma del pico · F láser · E tienda · M minimapa · U depuración · V simulación · Esc pausa</p>
   </div>
+
+  <div id="pause-menu">
+    <div class="pause-box">
+      <h2>Pausa</h2>
+      <p id="pause-info"></p>
+      <button id="btn-resume" class="primary">Continuar</button>
+      <button id="btn-copy-seed">Copiar seed</button>
+      <button id="btn-toggle-debug">Depuración (U): Desactivada</button>
+      <button id="btn-toggle-sim">Vista simulación (V): Desactivada</button>
+      <button id="btn-toggle-map">Minimapa (M): Normal</button>
+      <button id="btn-restart">Reiniciar partida</button>
+      <button id="btn-exit" class="danger">Salir al menú principal</button>
+    </div>
+  </div>
+
   <div id="hud"></div>
   <div id="debug"></div>
   <div id="shop"></div>
