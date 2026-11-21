@@ -5,34 +5,155 @@
   <title>Bajo Tierra</title>
   <style>
     :root {
-      --panel: rgba(34, 21, 14, 0.88);
+      --panel: rgba(34, 21, 14, 0.9);
       --panel-border: #7a4e2d;
       --text: #f3e3c8;
       --muted: #b89c7a;
       --gold: #ffcf5a;
     }
+    * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; overflow: hidden; background: #111; }
     canvas { display: block; }
 
-    /* Menú principal */
+    /* ---------- Menú principal ---------- */
     #menu {
       position: fixed; inset: 0; z-index: 10;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 14px; background: #111; color: #eee; font-family: sans-serif;
+      padding: 20px; font-family: sans-serif; color: var(--text);
+      background:
+        radial-gradient(circle at 50% 18%, rgba(79, 227, 255, 0.14), transparent 45%),
+        radial-gradient(circle at 20% 82%, rgba(255, 159, 28, 0.16), transparent 45%),
+        linear-gradient(180deg, #132238 0%, #1d2d44 26%, #3d2616 26.5%, #2b1a12 52%, #1e1316 78%, #120b10 100%);
+      overflow: hidden;
     }
-    #menu h1 { margin: 0; font-size: 56px; letter-spacing: 2px; }
-    #menu p { margin: 0; color: #aaa; text-align: center; max-width: 620px; }
-    #menu input, #menu select {
-      width: 260px; padding: 10px; font-size: 16px; text-align: center;
-      background: #222; color: #eee; border: 1px solid #555; border-radius: 4px;
-    }
-    #menu button {
-      width: 280px; padding: 12px; font-size: 20px; cursor: pointer;
-      background: #2e9e4f; color: #fff; border: none; border-radius: 4px;
-    }
-    #menu button:hover { background: #38b95e; }
 
-    /* Menú de pausa */
+    /* Siluetas de estratos subterráneos y vetas brillantes */
+    .menu-strata {
+      position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+    }
+    .menu-strata::before {
+      content: ''; position: absolute; left: -5%; right: -5%; top: 24.5%; height: 22px;
+      background: repeating-linear-gradient(
+        90deg,
+        #2e9e4f 0px, #2e9e4f 32px,
+        #258240 32px, #258240 64px
+      );
+      clip-path: polygon(
+        0% 45%, 6% 15%, 14% 55%, 23% 20%, 31% 50%, 40% 10%, 49% 45%,
+        58% 18%, 67% 52%, 76% 15%, 85% 48%, 93% 22%, 100% 40%, 100% 100%, 0% 100%
+      );
+      opacity: 0.9;
+    }
+
+    .ore-glint {
+      position: absolute; width: 10px; height: 10px; border-radius: 2px;
+      transform: rotate(45deg);
+      animation: ore-pulse 2.8s infinite ease-in-out;
+    }
+    .ore-glint.gold { background: #ffd700; box-shadow: 0 0 12px #ffd700; top: 38%; left: 14%; animation-delay: 0s; }
+    .ore-glint.crystal { background: #b967ff; box-shadow: 0 0 14px #b967ff; top: 64%; left: 19%; animation-delay: 0.7s; }
+    .ore-glint.diamond { background: #4fe3ff; box-shadow: 0 0 14px #4fe3ff; top: 76%; right: 17%; animation-delay: 1.4s; }
+    .ore-glint.ruby { background: #e0245e; box-shadow: 0 0 14px #e0245e; top: 48%; right: 13%; animation-delay: 2.1s; }
+    .ore-glint.emerald { background: #2ecc71; box-shadow: 0 0 12px #2ecc71; top: 84%; left: 28%; animation-delay: 1.1s; }
+
+    @keyframes ore-pulse {
+      0%, 100% { opacity: 0.35; transform: rotate(45deg) scale(0.85); }
+      50% { opacity: 1; transform: rotate(45deg) scale(1.2); }
+    }
+
+    /* Cabecera del título */
+    .menu-header {
+      position: relative; z-index: 1; text-align: center; margin-bottom: 18px;
+    }
+    .menu-badge {
+      display: inline-block; padding: 4px 12px; margin-bottom: 8px;
+      font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+      color: #4fe3ff; background: rgba(15, 25, 38, 0.8);
+      border: 1px solid rgba(79, 227, 255, 0.4); border-radius: 999px;
+    }
+    #menu h1 {
+      margin: 0; font-size: clamp(44px, 7vw, 68px); font-weight: 900;
+      letter-spacing: 3px; text-transform: uppercase;
+      background: linear-gradient(180deg, #fff3b0 0%, #ffcf5a 48%, #d97724 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 5px 0 #241309) drop-shadow(0 10px 20px rgba(0, 0, 0, 0.75));
+    }
+    .menu-subtitle {
+      margin: 6px 0 0; font-size: 15px; color: var(--text); opacity: 0.9;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+    }
+
+    /* Tarjeta principal */
+    .menu-card {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; gap: 12px;
+      width: min(420px, 92vw); padding: 22px;
+      background: var(--panel); border: 2px solid var(--panel-border); border-radius: 10px;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 207, 90, 0.18);
+    }
+
+    .field-group {
+      display: flex; flex-direction: column; gap: 5px;
+    }
+    .field-group label {
+      font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+      color: var(--muted); text-transform: uppercase;
+    }
+    .seed-row {
+      display: flex; gap: 6px;
+    }
+    #menu input, #menu select {
+      width: 100%; padding: 11px 12px; font-size: 15px;
+      background: #1b100a; color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 6px;
+      outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    #menu input:focus, #menu select:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 2px rgba(255, 207, 90, 0.2);
+    }
+    #random-seed-btn {
+      width: 44px; flex-shrink: 0; padding: 0; font-size: 18px; cursor: pointer;
+      background: #4a2f1c; color: var(--gold);
+      border: 1px solid var(--panel-border); border-radius: 6px;
+      transition: background 0.15s, transform 0.1s;
+    }
+    #random-seed-btn:hover { background: #6a4326; }
+    #random-seed-btn:active { transform: scale(0.95); }
+
+    #play-btn {
+      width: 100%; margin-top: 4px; padding: 14px; font-size: 20px; font-weight: 800;
+      letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+      background: linear-gradient(180deg, #38b95e 0%, #268743 100%);
+      color: #fff; border: 1px solid #52d679; border-radius: 6px;
+      box-shadow: 0 4px 0 #175429, 0 8px 18px rgba(0, 0, 0, 0.45);
+      transition: transform 0.1s, filter 0.15s;
+    }
+    #play-btn:hover { filter: brightness(1.08); }
+    #play-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #175429; }
+
+    #last-seed {
+      margin: 0; min-height: 18px; font-size: 12px; text-align: center;
+      color: var(--gold); cursor: pointer;
+    }
+    #last-seed:hover { text-decoration: underline; }
+
+    /* Grilla de controles con teclas visuales */
+    .controls-box {
+      position: relative; z-index: 1;
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 14px;
+      max-width: 720px; margin-top: 16px; padding: 10px 16px;
+      background: rgba(20, 12, 8, 0.75); border: 1px solid rgba(122, 78, 45, 0.6);
+      border-radius: 8px; font-size: 12px; color: var(--muted);
+    }
+    .controls-box span { display: inline-flex; align-items: center; gap: 5px; }
+    kbd {
+      padding: 2px 6px; font: 700 11px monospace; color: var(--text);
+      background: #3a2416; border: 1px solid var(--panel-border);
+      border-bottom-width: 2px; border-radius: 4px;
+    }
+
+    /* ---------- Menú de pausa ---------- */
     #pause-menu {
       display: none; position: fixed; inset: 0; z-index: 9;
       flex-direction: column; align-items: center; justify-content: center;
@@ -92,7 +213,7 @@
       background: #3a1616;
     }
 
-    /* HUD y panel de debug */
+    /* ---------- HUD y panel de debug ---------- */
     #hud, #debug {
       display: none; position: fixed; z-index: 5; padding: 7px 10px;
       background: var(--panel); color: var(--text);
@@ -185,17 +306,54 @@
   <div id="app"></div>
 
   <div id="menu">
-    <h1>Bajo Tierra</h1>
-    <p>Cavá, juntá minerales, fabricá mejores herramientas y llegá cada vez más hondo</p>
-    <input id="seed-input" type="text" placeholder="Seed (vacío = aleatoria)" autocomplete="off" maxlength="30">
-    <select id="size-select" aria-label="Tamaño del mundo">
-      <option value="small">Mundo pequeño</option>
-      <option value="medium" selected>Mundo mediano</option>
-      <option value="large">Mundo grande</option>
-    </select>
-    <button id="play-btn">Jugar</button>
-    <p id="last-seed"></p>
-    <p>A/D mover · Espacio saltar (mantené en el aire para volar) · Click izquierdo cavar · Click derecho dinamita · Q forma del pico · F láser · E tienda · M minimapa · N silenciar · U depuración · V simulación · Esc pausa</p>
+    <div class="menu-strata">
+      <div class="ore-glint gold"></div>
+      <div class="ore-glint crystal"></div>
+      <div class="ore-glint diamond"></div>
+      <div class="ore-glint ruby"></div>
+      <div class="ore-glint emerald"></div>
+    </div>
+
+    <div class="menu-header">
+      <h1>Bajo Tierra</h1>
+      <p class="menu-subtitle">Cavá, juntá minerales, mejorá tu equipo y llegá cada vez más hondo</p>
+    </div>
+
+    <div class="menu-card">
+      <div class="field-group">
+        <label for="seed-input">Semilla del mundo</label>
+        <div class="seed-row">
+          <input id="seed-input" type="text" placeholder="Aleatoria (o escribí una)" autocomplete="off" maxlength="30">
+          <button id="random-seed-btn" type="button" title="Generar semilla aleatoria">🎲</button>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label for="size-select">Tamaño del mapa</label>
+        <select id="size-select" aria-label="Tamaño del mundo">
+          <option value="small">Pequeño (192 × 128)</option>
+          <option value="medium" selected>Mediano (320 × 224)</option>
+          <option value="large">Grande (480 × 320)</option>
+        </select>
+      </div>
+
+      <button id="play-btn">Jugar</button>
+      <p id="last-seed" title="Click para volver a usar esta seed"></p>
+    </div>
+
+    <div class="controls-box">
+      <span><kbd>A</kbd><kbd>D</kbd> Mover</span>
+      <span><kbd>Espacio</kbd> Saltar / Jetpack</span>
+      <span><kbd>Click Izq.</kbd> Cavar</span>
+      <span><kbd>Click Der.</kbd> Dinamita</span>
+      <span><kbd>Q</kbd> Forma</span>
+      <span><kbd>F</kbd> Láser</span>
+      <span><kbd>E</kbd> Tienda</span>
+      <span><kbd>M</kbd> Mapa</span>
+      <span><kbd>V</kbd> Simulación</span>
+      <span><kbd>U</kbd> Debug</span>
+      <span><kbd>Esc</kbd> Pausa</span>
+    </div>
   </div>
 
   <div id="pause-menu">

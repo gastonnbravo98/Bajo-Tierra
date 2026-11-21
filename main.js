@@ -34,6 +34,7 @@ const hudEl = document.getElementById('hud');
 const debugEl = document.getElementById('debug');
 const shopEl = document.getElementById('shop');
 const bannerEl = document.getElementById('banner');
+const randomSeedBtn = document.getElementById('random-seed-btn');
 
 const pauseEl = document.getElementById('pause-menu');
 const pauseInfoEl = document.getElementById('pause-info');
@@ -744,12 +745,15 @@ function startGame(seed, sizeKey) {
 }
 
 // ---------- Menú ----------
+let lastPlayedSeed = null;
+
 function play() {
   if (currentGame) return;
   const seed = seedFromText(seedInput.value);
   const sizeKey = sizeSelect.value || 'medium';
   seedInput.blur();
   menuEl.style.display = 'none';
+  sound.coin();
   currentGame = startGame(seed, sizeKey);
 }
 
@@ -762,7 +766,8 @@ function restartGame(seed, sizeKey) {
 }
 
 function backToMenu() {
-  lastSeedEl.textContent = `Última seed: ${currentGame.seed}`;
+  lastPlayedSeed = currentGame.seed;
+  lastSeedEl.textContent = `Última seed: ${lastPlayedSeed} (click para reutilizar)`;
   currentGame.stop();
   currentGame = null;
   menuEl.style.display = 'flex';
@@ -772,6 +777,14 @@ async function init() {
   app = new PIXI.Application();
   await app.init({ resizeTo: window, background: '#78b9e8', antialias: false });
   document.getElementById('app').appendChild(app.canvas);
+
+  randomSeedBtn.addEventListener('click', () => {
+    seedInput.value = String(Math.floor(Math.random() * 900000000) + 100000000);
+    sound.deposit();
+  });
+  lastSeedEl.addEventListener('click', () => {
+    if (lastPlayedSeed !== null) seedInput.value = String(lastPlayedSeed);
+  });
 
   playBtn.addEventListener('click', play);
   seedInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') play(); });
