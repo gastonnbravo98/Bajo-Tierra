@@ -1,38 +1,58 @@
 import {
-  COLS, ROWS, CHUNK, AIR, SAND, HARDNESS, LOOSE, SPAN_BY_HARDNESS,
+  COLS, ROWS, CHUNK, AIR, SAND, HARDNESS, LOOSE, SPAN_BY_HARDNESS, IS_INFINITE,
 } from './config.js';
 import { chunkIndexOf, CHUNKS_X, CHUNKS_Y } from './chunks.js';
+import { chunkKey } from './world.js';
 
-// ---------- Delta: lo que cambió respecto al mundo generado con la seed ----------
-// delta = Map( chunk -> Map( índice de celda -> tipo nuevo ) )
-function recordDelta(delta, chunk, i, type) {
-  let m = delta.get(chunk);
-  if (!m) { m = new Map(); delta.set(chunk, m); }
-  m.set(i, type);
+// ---------- Delta: Map( chunkId -> Map( localIdx (0..255) -> type ) ) ----------
+function localIndex(x, y) {
+  const cx = Math.floor(x / CHUNK);
+  const cy = Math.floor(y / CHUNK);
+  return (y - cy * CHUNK) * CHUNK + (x - cx * CHUNK);
 }
 
-// Reaplica sobre un mundo recién generado todo lo que cambió (cavado, explosiones, láser y caídas)
+function recordDelta(delta, chunkId, x, y, type) {
+  let m = delta.get(chunkId);
+  if (!m) { m = new Map(); delta.set(chunkId, m); }
+  m.set(localIndex(x, y), type);
+}
+
 export function applyDelta(world, delta) {
-  for (const m of delta.values()) {
-    for (const [i, type] of m) world[i] = type;
+  for (const [chunkId, m] of delta) {
+    let chx, chy;
+    if (typeof chunkId === 'string') {
+      [chx, chy] = chunkId.split(',').map(Number);
+    } else {
+      chx = chunkId % CHUNKS_X;
+      chy = Math.floor(chunkId / CHUNKS_X);
+    }
+    const x0 = chx * CHUNK;
+    const y0 = chy * CHUNK;
+    for (const [loc, type] of m) {
+      const lx = loc % CHUNK;
+      const ly = (loc - lx) / CHUNK;
+      world.set(x0 + lx, y0 + ly, type);
+    }
   }
 }
 
-// ---------- Formas del golpe (Unidad 7: máscaras de sustracción) ----------
-const COS_CONE = Math.cos((30 * Math.PI) / 180); // el cono abre 30 grados a cada lado
+// ---------- Formas del golpe (devuelve pares [x, y]) ----------
+const COS_CONE = Math.cos((30 * Math.PI) / 180);
 
-// Celdas (índices) que cubre un golpe centrado en (cx, cy).
-// El cono sale desde la celda del jugador (px, py) hacia el cursor.
 export function shapeCells(shape, cx, cy, radius, px, py) {
   const cells = [];
-  const add = (x, y) => { if (x >= 0 && y >= 0 && x < COLS && y < ROWS) cells.push(y * COLS + x); };
+  const add = (x, y) => {
+    if (y < 0) return;
+    if (!IS_INFINITE && (x < 0 || x >= COLS || y >= ROWS)) return;
+    cells.push([x, y]);
+  };
 
   if (shape === 'cross') {
     const arm = Math.ceil(radius * 2);
     for (let k = -arm; k <= arm; k++) { add(cx + k, cy); if (k !== 0) add(cx, cy + k); }
   } else if (shape === 'drill') {
     const len = Math.ceil(radius * 4);
-    for (let k = 0; k < len; k++) add(cx, cy + k);       // una columna hacia abajo
+    for (let k = 0; k < len; k++) add(cx, cy + k);
   } else if (shape === 'cone') {
     const dx = cx - px;
     const dy = cy - py;
@@ -51,7 +71,7 @@ export function shapeCells(shape, cx, cy, radius, px, py) {
       }
     }
   } else {
-    const r = Math.ceil(radius);                          // círculo
+    const r = Math.ceil(radius);
     for (let y = cy - r; y <= cy + r; y++) {
       for (let x = cx - r; x <= cx + r; x++) {
         const dx = x - cx;
@@ -63,13 +83,10 @@ export function shapeCells(shape, cx, cy, radius, px, py) {
   return cells;
 }
 
-// Rectángulo de celdas que ocupa una lista de índices (o null si está vacía)
 export function cellsBounds(cells) {
   if (!cells.length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const i of cells) {
-    const x = i % COLS;
-    const y = (i - x) / COLS;
+  for (const [x, y] of cells) {
     if (x < x0) x0 = x;
     if (x > x1) x1 = x;
     if (y < y0) y0 = y;
@@ -78,45 +95,35 @@ export function cellsBounds(cells) {
   return { x0, y0, x1, y1 };
 }
 
-// rompe una celda: la vacía, la anota en el delta y marca su chunk para redibujar
-function breakCell(world, delta, chunks, i, broken, onBreak) {
-  const type = world[i];
-  const x = i % COLS;
-  const y = (i - x) / COLS;
+function breakCell(world, delta, chunks, x, y, broken, onBreak) {
+  const type = world.get(x, y);
   broken[type] = (broken[type] || 0) + 1;
-  world[i] = AIR;
+  world.set(x, y, AIR);
   const c = chunkIndexOf(x, y);
-  recordDelta(delta, c, i, AIR);
+  recordDelta(delta, c, x, y, AIR);
   chunks.markDirty(c);
   if (onBreak) onBreak(x, y, type);
 }
 
-// ---------- Cavar ----------
-// Vacía las celdas dadas. power = dureza máxima que se puede romper: lo más duro queda
-// intacto y se cuenta en "blocked". onBreak(x, y, tipo) se llama por cada celda rota.
-// Devuelve { broken: {tipo: cantidad}, count, blocked }.
 export function digCells(world, delta, chunks, cells, power, onBreak) {
   const broken = {};
   let count = 0;
   let blocked = 0;
-  for (const i of cells) {
-    const type = world[i];
+  for (const [x, y] of cells) {
+    const type = world.get(x, y);
     if (type === AIR) continue;
     if (HARDNESS[type] > power) { blocked++; continue; }
-    breakCell(world, delta, chunks, i, broken, onBreak);
+    breakCell(world, delta, chunks, x, y, broken, onBreak);
     count++;
   }
   return { broken, count, blocked };
 }
 
-// Golpe circular (lo usan la dinamita y los tests)
 export function dig(world, delta, chunks, cx, cy, radius, power, onBreak) {
   return digCells(world, delta, chunks, shapeCells('circle', cx, cy, radius), power, onBreak);
 }
 
-// ---------- Láser: raycasting sobre la grilla (DDA) ----------
-// Recorre, en orden, las celdas que atraviesa un rayo. (ox, oy) en unidades de celda
-// (con decimales), (dx, dy) = dirección normalizada, maxDist en celdas.
+// ---------- Láser: raycasting DDA ----------
 export function rayCells(ox, oy, dx, dy, maxDist) {
   const cells = [];
   let cx = Math.floor(ox);
@@ -128,8 +135,8 @@ export function rayCells(ox, oy, dx, dy, maxDist) {
   let tMaxX = dx === 0 ? Infinity : (dx > 0 ? cx + 1 - ox : ox - cx) * tDeltaX;
   let tMaxY = dy === 0 ? Infinity : (dy > 0 ? cy + 1 - oy : oy - cy) * tDeltaY;
 
-  while (cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS) {
-    cells.push(cy * COLS + cx);
+  while (cy >= 0 && (IS_INFINITE || (cx >= 0 && cx < COLS && cy < ROWS))) {
+    cells.push([cx, cy]);
     const t = Math.min(tMaxX, tMaxY);
     if (t > maxDist) break;
     if (tMaxX < tMaxY) { cx += stepX; tMaxX += tDeltaX; }
@@ -138,181 +145,185 @@ export function rayCells(ox, oy, dx, dy, maxDist) {
   return cells;
 }
 
-// Dispara un rayo que rompe hasta `pierce` celdas en línea recta.
-// Se frena al llegar a algo más duro que `power`.
-// Devuelve { broken, count, blocked, hitCells, last }, donde last es la última celda alcanzada.
 export function laser(world, delta, chunks, ox, oy, dx, dy, pierce, range, power, onBreak) {
   const path = rayCells(ox, oy, dx, dy, range);
   const broken = {};
   const hitCells = [];
   let blocked = 0;
-  let last = path.length ? path[path.length - 1] : -1;
-  for (const i of path) {
-    const type = world[i];
+  let last = path.length ? path[path.length - 1] : [Math.floor(ox), Math.floor(oy)];
+  for (const [x, y] of path) {
+    const type = world.get(x, y);
     if (type === AIR) continue;
-    if (HARDNESS[type] > power) { blocked++; last = i; break; }
-    breakCell(world, delta, chunks, i, broken, onBreak);
-    hitCells.push(i);
-    last = i;
+    if (HARDNESS[type] > power) { blocked++; last = [x, y]; break; }
+    breakCell(world, delta, chunks, x, y, broken, onBreak);
+    hitCells.push([x, y]);
+    last = [x, y];
     if (hitCells.length >= pierce) break;
   }
   return { broken, count: hitCells.length, blocked, hitCells, last };
 }
 
 // ---------- Simulación del terreno (autómata celular) ----------
-// Reglas locales sobre la grilla, revisadas solo en los chunks "activos":
-//  1. Arena y grava: si abajo hay aire, caen una celda por paso.
-//     La arena además se desliza en diagonal (se desparrama); la grava solo cae derecho.
-//  2. Derrumbes: una celda de material flojo (SPAN_BY_HARDNESS) con aire debajo forma, con sus
-//     vecinas de la fila, un "tramo sin apoyo". Si el tramo es más ancho de lo que aguanta ese
-//     material, cae. Lo duro (piedra, granito, plataforma) nunca se derrumba.
-// Todo movimiento mueve una celda hacia abajo, así que siempre termina por asentarse.
-
 const LOOSE_SET = new Set(LOOSE);
 const MAX_RUN = 40;
-
-// tipos de celda según su apoyo (los usa kind)
-const GAP = 0;     // aire, o algo flojo que está cayendo
-const ANCHOR = 1;  // algo firme: duro, o flojo pero apoyado
-const HANG = 2;    // material de derrumbe con aire debajo
+const GAP = 0;
+const ANCHOR = 1;
+const HANG = 2;
 
 export function createSim(world, delta, chunks) {
-  let pending = new Set(); // chunks que se revisan en el próximo paso
+  let pending = new Set(); // Set de chunkId (número en finito, "cx,cy" en infinito)
   let tick = 0;
-  let moved = [];          // celdas (destino) que se movieron en el último paso
-  let lastActive = [];     // chunks revisados en el último paso
+  let moved = [];          // pares [x, y] movidos en el último paso
+  let lastActive = [];
   const stats = { steps: 0, activeChunks: 0, examined: 0, moved: 0, ms: 0, totalMoved: 0 };
 
-  let occupied = null;     // celdas ocupadas por el jugador: nada puede caer ahí
+  let occupied = null;
   let blockedFlag = false;
 
-  // despierta el chunk de una celda y sus vecinos (el apoyo cruza los bordes de chunk)
-  function touch(i) {
-    const x = i % COLS;
-    const y = (i - x) / COLS;
+  const cellKey = (x, y) => `${x},${y}`;
+
+  function touch(x, y) {
     const cx = Math.floor(x / CHUNK);
     const cy = Math.floor(y / CHUNK);
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
         const nx = cx + dx;
         const ny = cy + dy;
-        if (nx >= 0 && ny >= 0 && nx < CHUNKS_X && ny < CHUNKS_Y) pending.add(ny * CHUNKS_X + nx);
+        if (ny < 0) continue;
+        if (!IS_INFINITE && (nx < 0 || nx >= CHUNKS_X || ny >= CHUNKS_Y)) continue;
+        pending.add(IS_INFINITE ? chunkKey(nx, ny) : ny * CHUNKS_X + nx);
       }
     }
   }
 
-  function setCell(i, type) {
-    world[i] = type;
-    const x = i % COLS;
-    const c = chunkIndexOf(x, (i - x) / COLS);
-    recordDelta(delta, c, i, type);
+  function setCell(x, y, type) {
+    world.set(x, y, type);
+    const c = chunkIndexOf(x, y);
+    recordDelta(delta, c, x, y, type);
     chunks.markDirty(c);
   }
 
-  // mueve la celda i a la celda j (que está vacía)
-  function move(i, j) {
-    setCell(j, world[i]);
-    setCell(i, AIR);
-    moved.push(j);
-    touch(i);
-    touch(j);
+  function move(x0, y0, x1, y1) {
+    setCell(x1, y1, world.get(x0, y0));
+    setCell(x0, y0, AIR);
+    moved.push([x1, y1]);
+    touch(x0, y0);
+    touch(x1, y1);
   }
 
   function canEnter(x, y) {
-    if (x < 0 || x >= COLS || y >= ROWS) return false;
-    const j = y * COLS + x;
-    if (world[j] !== AIR) return false;
-    if (occupied && occupied.has(j)) { blockedFlag = true; return false; }
+    if (y < 0) return false;
+    if (!IS_INFINITE && (x < 0 || x >= COLS || y >= ROWS)) return false;
+    if (world.get(x, y) !== AIR) return false;
+    if (occupied && occupied.has(cellKey(x, y))) { blockedFlag = true; return false; }
     return true;
   }
 
   function kind(x, y) {
-    if (x < 0 || x >= COLS) return ANCHOR;  // los bordes del mapa sostienen
+    if (!IS_INFINITE && (x < 0 || x >= COLS)) return ANCHOR;
     if (y < 0) return GAP;
-    if (y >= ROWS) return ANCHOR;
-    const t = world[y * COLS + x];
+    if (!IS_INFINITE && y >= ROWS) return ANCHOR;
+    const t = world.get(x, y);
     if (t === AIR) return GAP;
     const loose = LOOSE_SET.has(t);
-    if (!loose && SPAN_BY_HARDNESS[HARDNESS[t]] === undefined) return ANCHOR; // material duro
-    if (y + 1 >= ROWS || world[(y + 1) * COLS + x] !== AIR) return ANCHOR;    // apoyado
+    if (!loose && SPAN_BY_HARDNESS[HARDNESS[t]] === undefined) return ANCHOR;
+    if ((!IS_INFINITE && y + 1 >= ROWS) || world.get(x, y + 1) !== AIR) return ANCHOR;
     return loose ? GAP : HANG;
   }
 
-  // ¿aguanta el tramo a..b de la fila y?
   function holds(a, b, y) {
     let span = Infinity;
     for (let x = a; x <= b; x++) {
-      span = Math.min(span, SPAN_BY_HARDNESS[HARDNESS[world[y * COLS + x]]]);
+      span = Math.min(span, SPAN_BY_HARDNESS[HARDNESS[world.get(x, y)]]);
     }
     const L = b - a + 1;
     const left = kind(a - 1, y) === ANCHOR;
     const right = kind(b + 1, y) === ANCHOR;
-    if (left && right) return L <= span;                           // apoyado de los dos lados
-    if (left || right) return L <= Math.max(1, Math.floor(span / 2)); // en voladizo
-    return false;                                                  // flotando
+    if (left && right) return L <= span;
+    if (left || right) return L <= Math.max(1, Math.floor(span / 2));
+    return false;
   }
 
-  // un paso de simulación; occ = Set de celdas ocupadas por el jugador (opcional)
-  function step(occ) {
+  // activeBounds (opcional): { cx0, cx1, cy0, cy1 } ventana alrededor de la cámara
+  function step(occ, activeBounds) {
     const t0 = performance.now();
     occupied = occ || null;
     tick++;
 
-    // de abajo hacia arriba por chunk, así una celda no se mueve dos veces en el mismo paso
-    const list = [...pending].sort((a, b) => b - a);
-    pending = new Set();
+    const parseChunk = (id) => {
+      if (typeof id === 'string') {
+        const [cx, cy] = id.split(',').map(Number);
+        return { id, cx, cy };
+      }
+      return { id, cx: id % CHUNKS_X, cy: Math.floor(id / CHUNKS_X) };
+    };
+
+    const all = [...pending].map(parseChunk);
+    const toProcess = [];
+    const deferred = new Set();
+
+    for (const item of all) {
+      if (activeBounds && (
+        item.cx < activeBounds.cx0 || item.cx > activeBounds.cx1 ||
+        item.cy < activeBounds.cy0 || item.cy > activeBounds.cy1
+      )) {
+        deferred.add(item.id); // fuera de la ventana 3x3: queda pendiente para cuando vuelvas
+      } else {
+        toProcess.push(item);
+      }
+    }
+
+    // Ordenar de abajo hacia arriba (cy descendente)
+    toProcess.sort((a, b) => b.cy - a.cy);
+    pending = deferred;
     moved = [];
     let examined = 0;
 
-    for (const c of list) {
+    for (const { id, cx, cy } of toProcess) {
       blockedFlag = false;
-      const x0 = (c % CHUNKS_X) * CHUNK;
-      const y0 = Math.floor(c / CHUNKS_X) * CHUNK;
+      const x0 = cx * CHUNK;
+      const y0 = cy * CHUNK;
       const xEnd = x0 + CHUNK - 1;
 
       for (let y = y0 + CHUNK - 1; y >= y0; y--) {
-        // 1) arena y grava (el sentido de la fila se alterna para que no se corran siempre al mismo lado)
         const ltr = ((tick + y) & 1) === 0;
         for (let k = 0; k < CHUNK; k++) {
           const x = ltr ? x0 + k : xEnd - k;
-          const i = y * COLS + x;
-          const t = world[i];
+          const t = world.get(x, y);
           if (!LOOSE_SET.has(t)) continue;
           examined++;
-          if (canEnter(x, y + 1)) { move(i, i + COLS); continue; }
+          if (canEnter(x, y + 1)) { move(x, y, x, y + 1); continue; }
           if (t === SAND) {
             const d = ((x + tick) & 1) ? 1 : -1;
-            if (canEnter(x + d, y + 1)) move(i, i + COLS + d);
-            else if (canEnter(x - d, y + 1)) move(i, i + COLS - d);
+            if (canEnter(x + d, y + 1)) move(x, y, x + d, y + 1);
+            else if (canEnter(x - d, y + 1)) move(x, y, x - d, y + 1);
           }
         }
 
-        // 2) derrumbes: tramos de la fila sin apoyo suficiente
         let x = x0;
         while (x <= xEnd) {
           if (kind(x, y) !== HANG) { x++; continue; }
           let a = x;
-          while (a > 0 && x - a < MAX_RUN && kind(a - 1, y) === HANG) a--;
+          while ((IS_INFINITE || a > 0) && x - a < MAX_RUN && kind(a - 1, y) === HANG) a--;
           let b = x;
-          while (b < COLS - 1 && b - a < MAX_RUN && kind(b + 1, y) === HANG) b++;
+          while ((IS_INFINITE || b < COLS - 1) && b - a < MAX_RUN && kind(b + 1, y) === HANG) b++;
           const end = Math.min(b, xEnd);
           examined += end - x + 1;
           if (!holds(a, b, y)) {
             for (let xx = x; xx <= end; xx++) {
-              if (canEnter(xx, y + 1)) { const i = y * COLS + xx; move(i, i + COLS); }
+              if (canEnter(xx, y + 1)) move(xx, y, xx, y + 1);
             }
           }
           x = end + 1;
         }
       }
 
-      // si el jugador tapó el camino, el chunk sigue activo hasta que se mueva
-      if (blockedFlag) pending.add(c);
+      if (blockedFlag) pending.add(id);
     }
 
-    lastActive = list;
+    lastActive = toProcess.map((p) => p.id);
     stats.steps++;
-    stats.activeChunks = list.length;
+    stats.activeChunks = toProcess.length;
     stats.examined = examined;
     stats.moved = moved.length;
     stats.totalMoved += moved.length;
@@ -326,14 +337,16 @@ export function createSim(world, delta, chunks) {
     get lastActive() { return lastActive; },
     get pendingCount() { return pending.size; },
 
-    // despierta los chunks que tocan el rectángulo de celdas (después de cavar o explotar)
     wakeRect(x0, y0, x1, y1) {
-      const cx0 = Math.max(0, Math.floor(x0 / CHUNK) - 1);
-      const cx1 = Math.min(CHUNKS_X - 1, Math.floor(x1 / CHUNK) + 1);
+      const cx0 = Math.floor(x0 / CHUNK) - 1;
+      const cx1 = Math.floor(x1 / CHUNK) + 1;
       const cy0 = Math.max(0, Math.floor(y0 / CHUNK) - 1);
-      const cy1 = Math.min(CHUNKS_Y - 1, Math.floor(y1 / CHUNK) + 1);
+      const cy1 = Math.floor(y1 / CHUNK) + 1;
       for (let cy = cy0; cy <= cy1; cy++) {
-        for (let cx = cx0; cx <= cx1; cx++) pending.add(cy * CHUNKS_X + cx);
+        for (let cx = cx0; cx <= cx1; cx++) {
+          if (!IS_INFINITE && (cx < 0 || cx >= CHUNKS_X || cy >= CHUNKS_Y)) continue;
+          pending.add(IS_INFINITE ? chunkKey(cx, cy) : cy * CHUNKS_X + cx);
+        }
       }
     },
   };

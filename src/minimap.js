@@ -1,13 +1,100 @@
-import { COLS, ROWS, CELL, CHUNK, AIR, COLORS, MINIMAP_RADIUS } from './config.js';
+import { COLS, ROWS, CELL, CHUNK, AIR, COLORS, MINIMAP_RADIUS, IS_INFINITE } from './config.js';
 import { CHUNKS_X } from './chunks.js';
 
-const FOG = 0x0a0a0a;    // celda sin explorar
-const EMPTY = 0x24323d;  // aire ya explorado
+const FOG = 0x0a0a0a;
+const EMPTY = 0x24323d;
+const RADAR_SIZE = 160; // 160x160 celdas alrededor del jugador en modo infinito
 
 export function createMinimap(world) {
-  const explored = new Uint8Array(COLS * ROWS);
+  const view = document.createElement('canvas');
+  view.id = 'minimap';
+  document.body.appendChild(view);
+  const ctx = view.getContext('2d');
 
-  // capa base: un píxel por celda
+  // ---------- MODO INFINITO: Radar local centrado en el jugador ----------
+  if (IS_INFINITE) {
+    view.width = RADAR_SIZE;
+    view.height = RADAR_SIZE;
+    const explored = new Set(); // "x,y"
+    const img = ctx.createImageData(RADAR_SIZE, RADAR_SIZE);
+
+    return {
+      toggleSize() { return view.classList.toggle('big'); },
+
+      reveal(px, py) {
+        const R = MINIMAP_RADIUS;
+        for (let y = py - R; y <= py + R; y++) {
+          if (y < 0) continue;
+          for (let x = px - R; x <= px + R; x++) {
+            const dx = x - px;
+            const dy = y - py;
+            if (dx * dx + dy * dy <= R * R) explored.add(`${x},${y}`);
+          }
+        }
+      },
+
+      redrawChunk() {}, // en modo radar se dibuja directo alrededor del jugador
+
+      draw({ player, camX, camY, screenW, screenH, bases = [], goalRow }) {
+        const px = Math.floor((player.x + player.w / 2) / CELL);
+        const py = Math.floor((player.y + player.h / 2) / CELL);
+        const half = RADAR_SIZE >> 1;
+        const x0 = px - half;
+        const y0 = py - half;
+
+        for (let ry = 0; ry < RADAR_SIZE; ry++) {
+          const wy = y0 + ry;
+          for (let rx = 0; rx < RADAR_SIZE; rx++) {
+            const wx = x0 + rx;
+            let color = FOG;
+            if (wy < 0) {
+              color = 0x162436; // cielo nocturno
+            } else if (explored.has(`${wx},${wy}`)) {
+              const t = world.get(wx, wy);
+              color = t === AIR ? EMPTY : COLORS[t];
+            }
+            const p = (ry * RADAR_SIZE + rx) * 4;
+            img.data[p] = (color >> 16) & 255;
+            img.data[p + 1] = (color >> 8) & 255;
+            img.data[p + 2] = color & 255;
+            img.data[p + 3] = 255;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+
+        // Línea de hito / profundidad
+        if (goalRow >= y0 && goalRow < y0 + RADAR_SIZE) {
+          ctx.fillStyle = 'rgba(255, 224, 102, 0.75)';
+          ctx.fillRect(0, goalRow - y0, RADAR_SIZE, 1.5);
+        }
+
+        // Tienda principal y puestos avanzados
+        for (const b of bases) {
+          const bx = b.col - x0;
+          const by = b.row - y0;
+          if (bx >= -4 && bx <= RADAR_SIZE + 4 && by >= -4 && by <= RADAR_SIZE + 4) {
+            ctx.fillStyle = b.main ? '#38b95e' : '#4fe3ff';
+            ctx.fillRect(bx - 2, by - 3, 5, 3);
+          }
+        }
+
+        // Cámara
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(camX / CELL - x0, camY / CELL - y0, screenW / CELL, screenH / CELL);
+
+        // Jugador (centro)
+        ctx.fillStyle = '#ff5252';
+        ctx.fillRect(half - 1.5, half - 1.5, 3, 3);
+      },
+
+      destroy() { view.remove(); },
+    };
+  }
+
+  // ---------- MODO FINITO (original) ----------
+  const raw = world.raw || world;
+  const explored = new Uint8Array(COLS * ROWS);
   const base = document.createElement('canvas');
   base.width = COLS;
   base.height = ROWS;
@@ -16,7 +103,7 @@ export function createMinimap(world) {
   let changed = true;
 
   function paint(i) {
-    const type = world[i];
+    const type = raw[i];
     const color = !explored[i] ? FOG : type === AIR ? EMPTY : COLORS[type];
     const p = i * 4;
     img.data[p] = (color >> 16) & 255;
@@ -26,21 +113,12 @@ export function createMinimap(world) {
   }
   for (let i = 0; i < COLS * ROWS; i++) paint(i);
 
-  // lienzo visible (el CSS lo agranda y lo ubica a la derecha)
-  const view = document.createElement('canvas');
-  view.id = 'minimap';
   view.width = COLS;
   view.height = ROWS;
-  document.body.appendChild(view);
-  const ctx = view.getContext('2d');
 
   return {
-    // alterna entre tamaño normal y grande (tecla M)
-    toggleSize() {
-      return view.classList.toggle('big');
-    },
+    toggleSize() { return view.classList.toggle('big'); },
 
-    // descubrir lo que rodea al jugador (px, py en celdas)
     reveal(px, py) {
       const R = MINIMAP_RADIUS;
       for (let y = py - R; y <= py + R; y++) {
@@ -58,8 +136,8 @@ export function createMinimap(world) {
       }
     },
 
-    // repintar un chunk que cambió (cavado, regeneración)
     redrawChunk(c) {
+      if (typeof c !== 'number') return;
       const x0 = (c % CHUNKS_X) * CHUNK;
       const y0 = Math.floor(c / CHUNKS_X) * CHUNK;
       for (let y = y0; y < y0 + CHUNK; y++) {
@@ -68,29 +146,24 @@ export function createMinimap(world) {
       changed = true;
     },
 
-    // camX, camY y screenW, screenH están en píxeles del mundo
-    draw({ player, camX, camY, screenW, screenH, shopCol, shopRow, goalRow }) {
+    draw({ player, camX, camY, screenW, screenH, bases = [], goalRow }) {
       if (changed) { bctx.putImageData(img, 0, 0); changed = false; }
       ctx.drawImage(base, 0, 0);
 
-      // línea de meta
       if (goalRow >= 0 && goalRow < ROWS) {
         ctx.fillStyle = 'rgba(255, 224, 102, 0.75)';
         ctx.fillRect(0, goalRow, COLS, 1.5);
       }
 
-      // cabaña de la tienda
-      if (shopCol !== undefined && shopRow !== undefined) {
-        ctx.fillStyle = '#38b95e';
-        ctx.fillRect(shopCol - 2, shopRow - 3, 5, 3);
+      for (const b of bases) {
+        ctx.fillStyle = b.main ? '#38b95e' : '#4fe3ff';
+        ctx.fillRect(b.col - 2, b.row - 3, 5, 3);
       }
 
-      // recuadro de lo que ve la cámara
       ctx.strokeStyle = 'rgba(255,255,255,0.8)';
       ctx.lineWidth = 1;
       ctx.strokeRect(camX / CELL, camY / CELL, screenW / CELL, screenH / CELL);
 
-      // jugador
       ctx.fillStyle = '#ff5252';
       const px = (player.x + player.w / 2) / CELL;
       const py = (player.y + player.h / 2) / CELL;

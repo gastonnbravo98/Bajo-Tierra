@@ -1,12 +1,12 @@
 import {
   CELL, COLS, ROWS, CHUNK, NAMES, HARDNESS, COLORS, ORE_VALUE, ORE_NAME,
   DIG_REACH, DIG_DELAY, SELL_RANGE, DYNAMITE, LASER, CRYSTAL, CRYSTAL_FUEL, SIM_HZ,
-  SIZES, BIOME_NAMES, SHAPE_NAMES, setWorldSize, goalDepth,
+  SIZES, BIOME_NAMES, SHAPE_NAMES, setWorldSize, goalDepth, IS_INFINITE, PLATFORM, AIR,
 } from './src/config.js';
 import { seedFromText } from './src/random.js';
-import { generateWorld, generateBiomes } from './src/worldgen.js';
+import { generateWorld, generateBiomes, createInfiniteWorld } from './src/worldgen.js';
 import {
-  createPlayerSprite, updatePlayerSprite, createShop, createBackground,
+  createPlayerSprite, updatePlayerSprite, createShop, createOutpost, createBackground,
   createBomb, createGoalLine, createFloatingTexts, createEffects,
 } from './src/render.js';
 import { createPlayer, updatePlayer } from './src/player.js';
@@ -54,49 +54,62 @@ const btnExit = document.getElementById('btn-exit');
 
 let app;
 let currentGame = null;
-let debugOn = false; // se mantiene al volver al menú y jugar de nuevo
+let debugOn = false;
 
-// ---------- Una partida ----------
 function startGame(seed, sizeKey) {
-  setWorldSize(sizeKey); // COLS y ROWS cambian para todos los módulos
+  setWorldSize(sizeKey);
   const GOAL = goalDepth();
   const debug = createDebug(debugEl, debugOn);
 
+  const delta = new Map(); // chunkId -> Map(localIdx -> type)
   const tGen = performance.now();
-  const world = generateWorld(seed);
-  const biomes = generateBiomes(seed);
-  debug.log(`Mundo ${SIZES[sizeKey].name} ${COLS}x${ROWS} generado (seed ${seed}) en ${(performance.now() - tGen).toFixed(0)} ms`);
+  const world = IS_INFINITE ? createInfiniteWorld(seed, delta) : generateWorld(seed);
+  const biomes = IS_INFINITE ? null : generateBiomes(seed);
+  debug.log(
+    IS_INFINITE
+      ? `Mundo Infinito inicializado (seed ${seed}) en ${(performance.now() - tGen).toFixed(1)} ms`
+      : `Mundo ${SIZES[sizeKey].name} ${COLS}x${ROWS} generado (seed ${seed}) en ${(performance.now() - tGen).toFixed(0)} ms`,
+  );
 
-  const delta = new Map(); // chunk -> Map(celda -> tipo nuevo): todo lo que cambió respecto de la seed
   const stats = createStats();
 
   const worldLayer = new PIXI.Container();
   app.stage.addChild(worldLayer);
-  worldLayer.addChild(createBackground(world));
+  const bg = createBackground(world);
+  worldLayer.addChild(bg);
 
   const chunks = createChunks(world, biomes);
   worldLayer.addChild(chunks.container);
 
-  const sim = createSim(world, delta, chunks); // arena, grava y derrumbes
+  const sim = createSim(world, delta, chunks);
 
-  // modo simulación (tecla V): pinta las celdas que se movieron y los chunks que se están simulando
   const simGfx = new PIXI.Graphics();
   worldLayer.addChild(simGfx);
   let simView = false;
-  const heat = new Map(); // celda -> segundos desde que se movió
+  const heat = new Map(); // "x,y" -> segundos desde que se movió
 
   const player = createPlayer(world);
-  const startY = player.y + player.h;                              // altura de la superficie inicial
+  const startY = player.y + player.h;
   const startRow = Math.round(startY / CELL);
   const goalRow = startRow + GOAL;
   const spawnCol = Math.floor((player.x + player.w / 2) / CELL);
 
-  worldLayer.addChild(createGoalLine(goalRow * CELL));
+  // En modo finito hay meta; en modo infinito no se corta el juego
+  if (!IS_INFINITE) {
+    worldLayer.addChild(createGoalLine(goalRow * CELL, false));
+  }
 
-  // la tienda queda en el punto de salida
+  // Bases (tienda principal + puestos avanzados subterráneos)
+  const bases = [{
+    name: 'Superficie',
+    col: spawnCol,
+    row: startRow,
+    x: (spawnCol + 0.5) * CELL,
+    y: startY - CELL,
+    main: true,
+  }];
+  let activeBaseIndex = 0;
   worldLayer.addChild(createShop(spawnCol, startY));
-  const shopX = (spawnCol + 0.5) * CELL;
-  const shopY = startY - CELL;
 
   const playerSprite = createPlayerSprite(player);
   worldLayer.addChild(playerSprite);
@@ -110,18 +123,16 @@ function startGame(seed, sizeKey) {
   const floatingTexts = createFloatingTexts();
   worldLayer.addChild(floatingTexts.layer);
 
-  const preview = new PIXI.Graphics(); // celdas que va a romper el próximo golpe
+  const preview = new PIXI.Graphics();
   worldLayer.addChild(preview);
 
   const minimap = createMinimap(world);
   let bigMap = false;
 
-  // mochila: una cuenta por cada tipo de mineral
   const cargo = {};
   for (const t of Object.keys(ORE_VALUE)) cargo[t] = 0;
   const cargoTotal = () => Object.values(cargo).reduce((a, b) => a + b, 0);
 
-  // estado de la partida
   let paused = false;
   let msg = '';
   let msgTimer = 0;
@@ -135,16 +146,16 @@ function startGame(seed, sizeKey) {
   let playTime = 0;
   let won = false;
   let shake = 0;
-  let near = false;             // ¿el jugador está cerca de la tienda?
-  let actionText = '';          // se completa con el redibujo y va al registro de debug
+  let nearBase = null;
+  let actionText = '';
   let rebuiltTotal = 0;
   let lastRebuild = { n: 0, ms: 0 };
   let camX = 0, camY = 0;
-  let tcx = 0, tcy = 0, inReach = false; // celda bajo el mouse
+  let tcx = 0, tcy = 0, inReach = false;
   const bombs = [];
   const SIM_STEP = 1 / SIM_HZ;
   let simAcc = 0;
-  let burst = null;              // resumen de un derrumbe en curso
+  let burst = null;
   let lastActiveChunks = [];
   let lastActiveTime = -99;
 
@@ -164,12 +175,85 @@ function startGame(seed, sizeKey) {
     noFuelAlertTimer = 1.2;
   }
 
+  // ---------- Puestos Avanzados (G) y Teletransporte (T) ----------
+  function deployOutpost() {
+    if (stats.outposts <= 0) {
+      say('No tenés Puestos Avanzados. Comprá uno en la tienda ($500)', 2.5);
+      return;
+    }
+    const col = Math.floor((player.x + player.w / 2) / CELL);
+    const groundRow = Math.floor((player.y + player.h + 2) / CELL);
+    if (groundRow < startRow + 5) {
+      say('Bajá un poco más para instalar un Puesto Avanzado', 2);
+      return;
+    }
+    if (bases.some((b) => Math.hypot(b.col - col, b.row - groundRow) < 12)) {
+      say('Ya hay una base muy cerca de acá', 2);
+      return;
+    }
+
+    stats.outposts--;
+    // Despejar 3x3 celdas de aire y colocar 3 celdas de plataforma firme debajo
+    for (let dy = -3; dy <= 0; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const wx = col + dx;
+        const wy = groundRow + dy;
+        if (dy === 0) {
+          world.set(wx, wy, PLATFORM);
+        } else if (world.get(wx, wy) !== PLATFORM) {
+          world.set(wx, wy, AIR);
+        }
+        chunks.markDirty(chunkIndexOf(wx, wy));
+      }
+    }
+
+    const groundY = groundRow * CELL;
+    const baseNum = bases.length;
+    worldLayer.addChild(createOutpost(col, groundY, baseNum));
+    const newBase = {
+      name: `Base #${baseNum}`,
+      col,
+      row: groundRow,
+      x: (col + 0.5) * CELL,
+      y: groundY - CELL,
+      main: false,
+    };
+    bases.push(newBase);
+    activeBaseIndex = bases.length - 1;
+
+    sound.coin();
+    effects.spawnExplosion(newBase.x, newBase.y, 42);
+    floatingTexts.spawn(newBase.x, newBase.y - 26, `¡${newBase.name} instalada!`, 0x4fe3ff);
+    say(`¡${newBase.name} instalada! Usá T para viajar entre bases`, 3.5);
+    debug.log(`Puesto Avanzado #${baseNum} instalado en (${col}, ${groundRow})`);
+  }
+
+  function teleportNextBase() {
+    if (bases.length < 2) {
+      say('Instalá un Puesto Avanzado (tecla G) para poder teletransportarte', 2.5);
+      return;
+    }
+    activeBaseIndex = (activeBaseIndex + 1) % bases.length;
+    const dest = bases[activeBaseIndex];
+    player.x = dest.x - player.w / 2;
+    player.y = dest.row * CELL - player.h;
+    player.vx = 0;
+    player.vy = 0;
+    player.onGround = true;
+
+    sound.laser();
+    effects.spawnExplosion(dest.x, dest.y, 36);
+    floatingTexts.spawn(dest.x, dest.y - 26, `Teletransportado a ${dest.name}`, 0x4fe3ff);
+    say(`Viajaste a ${dest.name} (${Math.max(0, dest.row - startRow)} m)`, 2.5);
+  }
+
   const panel = createShopPanel(shopEl, stats, (text) => {
     say(text);
     debug.log(text);
     sound.coin();
-    floatingTexts.spawn(shopX, shopY - 26, text, 0xffe066);
-  });
+    const target = nearBase || bases[0];
+    floatingTexts.spawn(target.x, target.y - 26, text, 0xffe066);
+  }, teleportNextBase);
 
   // ---------- Menú de pausa ----------
   function syncPauseLabels() {
@@ -208,22 +292,13 @@ function startGame(seed, sizeKey) {
     sound.setVolume(Number(volumeSlider.value) / 100);
     volumeLabel.textContent = `Volumen: ${volumeSlider.value}%`;
   };
-  toggleMusicEl.onclick = () => {
-    sound.toggleMusic();
-    syncPauseLabels();
-  };
-  toggleSfxEl.onclick = () => {
-    sound.toggleSfx();
-    syncPauseLabels();
-  };
+  toggleMusicEl.onclick = () => { sound.toggleMusic(); syncPauseLabels(); };
+  toggleSfxEl.onclick = () => { sound.toggleSfx(); syncPauseLabels(); };
   btnCopySeed.onclick = () => {
     navigator.clipboard?.writeText(String(seed));
     btnCopySeed.textContent = '¡Seed copiada!';
   };
-  btnToggleDebug.onclick = () => {
-    debugOn = debug.toggle();
-    syncPauseLabels();
-  };
+  btnToggleDebug.onclick = () => { debugOn = debug.toggle(); syncPauseLabels(); };
   btnToggleSim.onclick = () => {
     simView = !simView;
     if (!simView) { heat.clear(); simGfx.clear(); }
@@ -238,8 +313,7 @@ function startGame(seed, sizeKey) {
   btnRestart.onclick = () => restartGame(seed, sizeKey);
   btnExit.onclick = () => backToMenu();
 
-  // ---------- Cavar, explotar y disparar (Unidad 7) ----------
-  // guarda en la mochila lo que entre (con fortuna); el resto se pierde. Los cristales recargan combustible.
+  // ---------- Cavar, explotar y disparar ----------
   function collect(broken) {
     let free = bagMax(stats) - cargoTotal();
     let lost = 0;
@@ -274,14 +348,13 @@ function startGame(seed, sizeKey) {
     if (Math.random() < 0.55) particles.spawn((x + 0.5) * CELL, (y + 0.5) * CELL, COLORS[type], 1, power);
   };
 
-  // lo que pasa después de romper celdas: mochila, despertar la simulación, mensajes y registro
   function afterDig(res, label, cells, ms, cx, cy) {
     collect(res.broken);
     const b = cellsBounds(cells);
-    if (b) sim.wakeRect(b.x0 - 1, b.y0 - 1, b.x1 + 1, b.y1 + 1); // el terreno de alrededor puede perder apoyo
+    if (b) sim.wakeRect(b.x0 - 1, b.y0 - 1, b.x1 + 1, b.y1 + 1);
 
     if (res.count === 0 && res.blocked > 0) {
-      const under = cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS ? world[cy * COLS + cx] : 0;
+      const under = world.inBounds(cx, cy) ? world.get(cx, cy) : 0;
       if ((HARDNESS[under] ?? 0) >= 99) say('Eso no se puede romper', 1.5);
       else say(`Material muy duro: ${NAMES[under]} pide un pico mejor`, 1.5);
     }
@@ -333,7 +406,6 @@ function startGame(seed, sizeKey) {
     for (let i = bombs.length - 1; i >= 0; i--) {
       const b = bombs[i];
       b.t -= dt;
-      // parpadea cada vez más rápido antes de explotar
       const freq = b.t < 0.6 ? 34 : 18;
       b.g.alpha = Math.sin(b.t * freq) > 0 ? 1 : 0.35;
       if (b.t > 0) continue;
@@ -343,16 +415,15 @@ function startGame(seed, sizeKey) {
       applyDig(shapeCells('circle', b.cx, b.cy, DYNAMITE.radius), DYNAMITE.power, 'bomb', b.cx, b.cy);
       sound.explosion();
       effects.spawnExplosion(x, y, DYNAMITE.radius * CELL);
-      particles.spawn(x, y, 0xff9f1c, 34, 2.3); // fuego
+      particles.spawn(x, y, 0xff9f1c, 34, 2.3);
       particles.spawn(x, y, 0xffe066, 18, 1.7);
-      particles.spawn(x, y, 0x4a4a52, 14, 1.3); // escombros oscuros
+      particles.spawn(x, y, 0x4a4a52, 14, 1.3);
       shake = 10;
       b.g.destroy();
       bombs.splice(i, 1);
     }
   }
 
-  // Láser (tecla F): un rayo recto hacia el cursor, hecho con raycasting sobre la grilla
   function fireLaser() {
     const pierce = laserPierce(stats);
     if (pierce === 0) { say('Todavía no tenés el láser. Comprálo en la tienda', 2); return; }
@@ -376,31 +447,39 @@ function startGame(seed, sizeKey) {
     const t = performance.now();
     const res = laser(world, delta, chunks, ox / CELL, oy / CELL, dx, dy, pierce, LASER.range, digPower(stats), breakParticles(1.4));
 
-    const ex = ((res.last % COLS) + 0.5) * CELL;
-    const ey = (Math.floor(res.last / COLS) + 0.5) * CELL;
+    const [lx, ly] = res.last;
+    const ex = (lx + 0.5) * CELL;
+    const ey = (ly + 0.5) * CELL;
     sound.laser();
     effects.spawnLaser(ox, oy, ex, ey, stats.levels.laser);
     particles.spawn(ex, ey, 0xff9f1c, 8, 1.2);
     shake = Math.max(shake, 2.5);
 
-    afterDig(res, 'Láser', res.hitCells, performance.now() - t, res.last % COLS, Math.floor(res.last / COLS));
+    afterDig(res, 'Láser', res.hitCells, performance.now() - t, lx, ly);
   }
 
   // ---------- Simulación del terreno ----------
-  // celdas que ocupa el jugador: nada puede caer adentro de su caja
   function occupiedCells() {
     const set = new Set();
     const x0 = Math.floor(player.x / CELL);
     const x1 = Math.floor((player.x + player.w - 0.001) / CELL);
     const y0 = Math.floor(player.y / CELL);
     const y1 = Math.floor((player.y + player.h - 0.001) / CELL);
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set.add(y * COLS + x);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set.add(`${x},${y}`);
     return set;
   }
 
   function runSimStep() {
-    if (sim.pendingCount === 0) return; // nada activo: no se simula
-    sim.step(occupiedCells());
+    if (sim.pendingCount === 0) return;
+    const chunkPx = CHUNK * CELL;
+    // Ventana 3x3 pantallas alrededor de la cámara
+    const activeBounds = {
+      cx0: Math.floor((camX - app.screen.width) / chunkPx),
+      cx1: Math.floor((camX + app.screen.width * 2) / chunkPx),
+      cy0: Math.max(0, Math.floor((camY - app.screen.height) / chunkPx)),
+      cy1: Math.floor((camY + app.screen.height * 2) / chunkPx),
+    };
+    sim.step(occupiedCells(), activeBounds);
     const st = sim.stats;
     lastActiveChunks = sim.lastActive;
     lastActiveTime = playTime;
@@ -413,7 +492,7 @@ function startGame(seed, sizeKey) {
       burst.moved += st.moved;
       burst.steps++;
       burst.ms += st.ms;
-      if (simView) for (const i of sim.moved) heat.set(i, 0);
+      if (simView) for (const [mx, my] of sim.moved) heat.set(`${mx},${my}`, 0);
     }
     if (sim.pendingCount === 0 && burst) {
       debug.log(`Terreno estable: ${burst.moved} movimientos de celda en ${burst.steps} pasos (${burst.ms.toFixed(1)} ms de simulación)`);
@@ -421,22 +500,19 @@ function startGame(seed, sizeKey) {
     }
   }
 
-  // dibuja el modo simulación: magenta = celdas que se movieron hace poco, celeste = chunks simulados
   function drawSimView(dt) {
     simGfx.clear();
     const fresh = [], mid = [], old = [];
-    for (const [i, age] of heat) {
+    for (const [key, age] of heat) {
       const a = age + dt;
-      if (a > 0.5) { heat.delete(i); continue; }
-      heat.set(i, a);
-      (a < 0.15 ? fresh : a < 0.3 ? mid : old).push(i);
+      if (a > 0.5) { heat.delete(key); continue; }
+      heat.set(key, a);
+      const pos = key.split(',').map(Number);
+      (a < 0.15 ? fresh : a < 0.3 ? mid : old).push(pos);
     }
     const paint = (list, alpha) => {
       if (!list.length) return;
-      for (const i of list) {
-        const x = i % COLS;
-        simGfx.rect(x * CELL, ((i - x) / COLS) * CELL, CELL, CELL);
-      }
+      for (const [x, y] of list) simGfx.rect(x * CELL, y * CELL, CELL, CELL);
       simGfx.fill({ color: 0xff2bd6, alpha });
     };
     paint(old, 0.25);
@@ -445,25 +521,26 @@ function startGame(seed, sizeKey) {
 
     if (playTime - lastActiveTime < 0.25) {
       for (const c of lastActiveChunks) {
-        simGfx.rect((c % CHUNKS_X) * CHUNK * CELL, Math.floor(c / CHUNKS_X) * CHUNK * CELL, CHUNK * CELL, CHUNK * CELL);
+        let cx, cy;
+        if (typeof c === 'string') [cx, cy] = c.split(',').map(Number);
+        else { cx = c % CHUNKS_X; cy = Math.floor(c / CHUNKS_X); }
+        simGfx.rect(cx * CHUNK * CELL, cy * CHUNK * CELL, CHUNK * CELL, CHUNK * CELL);
       }
       simGfx.stroke({ width: 1, color: 0x2ee6ff, alpha: 0.7 });
     }
   }
 
-  // ---------- Teclas de la partida ----------
+  // ---------- Teclas ----------
   function onKey(e) {
     if (e.target instanceof HTMLInputElement || e.repeat || paused) return;
 
-    if (e.code === 'KeyR') {
-      // prueba de persistencia: seed + delta debe dar exactamente el mundo actual
+    if (e.code === 'KeyR' && !IS_INFINITE) {
       const fresh = generateWorld(seed);
       applyDelta(fresh, delta);
       let diff = 0;
-      for (let i = 0; i < fresh.length; i++) if (fresh[i] !== world[i]) diff++;
-      console.log('Celdas distintas entre mundo actual y seed + delta:', diff);
+      for (let i = 0; i < fresh.raw.length; i++) if (fresh.raw[i] !== world.raw[i]) diff++;
       debug.log(`Persistencia (R): seed + delta vs mundo actual = ${diff} celdas distintas`);
-      world.set(fresh);
+      world.raw.set(fresh.raw);
       chunks.markAllDirty();
     } else if (e.code === 'KeyN') {
       const m = sound.toggleSfx();
@@ -482,10 +559,14 @@ function startGame(seed, sizeKey) {
       else say(`Forma: ${SHAPE_NAMES[cycleShape(stats)]}`, 1.5);
     } else if (e.code === 'KeyF') {
       fireLaser();
+    } else if (e.code === 'KeyG') {
+      deployOutpost();
+    } else if (e.code === 'KeyT') {
+      teleportNextBase();
     } else if (e.code === 'KeyE') {
       if (panel.isOpen) panel.close();
-      else if (near) panel.open();
-      else say('Acercate a la tienda para abrirla', 1.5);
+      else if (nearBase) panel.open();
+      else say('Acercate a una tienda o Puesto Avanzado para abrirla', 1.8);
     } else if (e.code === 'Digit0') {
       panel.sellAll();
     } else if (/^Digit[1-9]$/.test(e.code)) {
@@ -496,21 +577,24 @@ function startGame(seed, sizeKey) {
 
   hudEl.style.display = 'block';
 
-  // ---------- Datos del panel de debug ----------
   const debugInfo = () => {
     const pcx = Math.floor((player.x + player.w / 2) / CELL);
     const pcy = Math.floor((player.y + player.h / 2) / CELL);
-    const inWorld = tcx >= 0 && tcy >= 0 && tcx < COLS && tcy < ROWS;
-    const mouseType = inWorld ? world[tcy * COLS + tcx] : 0;
-    const mouseBiome = inWorld ? BIOME_NAMES[biomes[tcy * COLS + tcx]] : '-';
+    const inWorld = world.inBounds(tcx, tcy);
+    const mouseType = inWorld ? world.get(tcx, tcy) : 0;
+    const mouseBiome = inWorld
+      ? BIOME_NAMES[IS_INFINITE ? world.biomeAt(tcx, tcy) : biomes[tcy * COLS + tcx]]
+      : '-';
     let deltaCells = 0;
     for (const m of delta.values()) deltaCells += m.size;
     const ss = sim.stats;
     return [
-      `Seed: ${seed}   Mundo ${SIZES[sizeKey].name}: ${COLS}x${ROWS} celdas (${CHUNKS_X}x${CHUNKS_Y} chunks de ${CHUNK})`,
+      IS_INFINITE
+        ? `Seed: ${seed}   Mundo Infinito (chunks en RAM: ${world.loadedCount})`
+        : `Seed: ${seed}   Mundo ${SIZES[sizeKey].name}: ${COLS}x${ROWS} celdas (${CHUNKS_X}x${CHUNKS_Y} chunks de ${CHUNK})`,
       `Jugador: celda (${pcx}, ${pcy})  vel (${Math.round(player.vx)}, ${Math.round(player.vy)}) px/s`,
       `  suelo: ${player.onGround ? 'sí' : 'no'}  vuelo: ${player.flying ? 'sí' : 'no'}  combustible: ${player.fuel.toFixed(0)}/${player.fuelMax}`,
-      `  chunk: #${chunkIndexOf(pcx, pcy)}`,
+      `  chunk: ${chunkIndexOf(pcx, pcy)}   bases activas: ${bases.length}`,
       `Mouse: celda (${tcx}, ${tcy})  ${NAMES[mouseType]}  dureza ${HARDNESS[mouseType] ?? 0}  bioma ${mouseBiome}  ${inReach ? 'al alcance' : 'lejos'}`,
       `Chunks visibles: ${chunks.visibleCount} de ${chunks.total}   redibujos totales: ${rebuiltTotal}`,
       `Último redibujo: ${lastRebuild.n} chunk(s) en ${lastRebuild.ms.toFixed(2)} ms`,
@@ -534,7 +618,6 @@ function startGame(seed, sizeKey) {
     updateCamera(worldLayer, app.screen, player);
     sound.setJetpack(player.flying);
 
-    // aviso al quedarse sin combustible o al intentar volar con el tanque vacío
     noFuelAlertTimer -= dt;
     if (player.fuel <= 0) {
       if (!wasFuelEmpty || (input.jump && !player.onGround && noFuelAlertTimer <= 0)) {
@@ -547,23 +630,21 @@ function startGame(seed, sizeKey) {
 
     camX = -worldLayer.x;
     camY = -worldLayer.y;
+    if (bg.updateInfinite) bg.updateInfinite(camX, camY, app.screen.width, app.screen.height, startRow);
     chunks.updateVisibility(camX, camY, app.screen.width, app.screen.height);
 
-    // mouse en coordenadas del mundo
     tcx = Math.floor((input.mouseX + camX) / CELL);
     tcy = Math.floor((input.mouseY + camY) / CELL);
     const pcx = player.x + player.w / 2;
     const pcy = player.y + player.h / 2;
     inReach = Math.hypot((tcx + 0.5) * CELL - pcx, (tcy + 0.5) * CELL - pcy) <= DIG_REACH * CELL;
 
-    // forma del golpe: la vista previa muestra exactamente las celdas que va a romper
     const radius = digRadius(stats);
     const cells = shapeCells(stats.shape, tcx, tcy, radius, Math.floor(pcx / CELL), Math.floor(pcy / CELL));
-    const usable = stats.shape === 'cone' || inReach; // el cono sale del jugador y no necesita alcance
+    const usable = stats.shape === 'cone' || inReach;
 
     updatePlayerSprite(playerSprite, player, input.mouseX + camX, input.mouseDown && usable, stats.levels, dt);
 
-    // humo del jetpack mientras vuela
     if (player.flying) {
       smokeTimer -= dt;
       if (smokeTimer <= 0) {
@@ -574,13 +655,9 @@ function startGame(seed, sizeKey) {
     }
 
     preview.clear();
-    for (const i of cells) {
-      const x = i % COLS;
-      preview.rect(x * CELL, ((i - x) / COLS) * CELL, CELL, CELL);
-    }
+    for (const [x, y] of cells) preview.rect(x * CELL, y * CELL, CELL, CELL);
     if (cells.length) preview.fill({ color: 0xffffff, alpha: usable ? 0.28 : 0.1 });
 
-    // click izquierdo: cavar. Click derecho: dinamita
     digTimer -= dt;
     if (input.mouseDown && usable && digTimer <= 0) {
       applyDig(cells, digPower(stats), 'dig', tcx, tcy);
@@ -594,7 +671,6 @@ function startGame(seed, sizeKey) {
 
     laserCooldown -= dt;
 
-    // simulación a paso fijo (máximo 2 pasos por frame para no trabar el juego)
     simAcc += dt;
     let simRuns = 0;
     while (simAcc >= SIM_STEP && simRuns < 2) {
@@ -604,9 +680,9 @@ function startGame(seed, sizeKey) {
     }
     if (simAcc > SIM_STEP) simAcc = 0;
 
-    // en la tienda: depositar la mochila en el almacén y llenar el combustible
-    near = Math.hypot(pcx - shopX, pcy - shopY) <= SELL_RANGE * CELL;
-    if (near) {
+    // Cerca de la tienda principal o de cualquier Puesto Avanzado
+    nearBase = bases.find((b) => Math.hypot(pcx - b.x, pcy - b.y) <= SELL_RANGE * CELL) || null;
+    if (nearBase) {
       player.fuel = player.fuelMax;
       let n = 0;
       let val = 0;
@@ -619,8 +695,8 @@ function startGame(seed, sizeKey) {
       if (n > 0) {
         say(`Depositaste ${n} minerales en el almacén`);
         sound.deposit();
-        floatingTexts.spawn(shopX, shopY - 26, `+${n} al almacén ($${val})`, 0x7ae582);
-        debug.log(`Depósito: ${n} minerales (almacén ${stashCount(stats)}, vale $${stashValue(stats)})`);
+        floatingTexts.spawn(nearBase.x, nearBase.y - 26, `+${n} al almacén ($${val})`, 0x7ae582);
+        debug.log(`Depósito en ${nearBase.name}: ${n} minerales (almacén ${stashCount(stats)}, vale $${stashValue(stats)})`);
         panel.render();
       }
     } else if (panel.isOpen) {
@@ -640,7 +716,6 @@ function startGame(seed, sizeKey) {
     floatingTexts.update(dt);
     if (simView) drawSimView(dt);
 
-    // redibujar solo los chunks modificados y repintarlos en el minimapa
     const tR = performance.now();
     const rebuilt = chunks.rebuildDirty();
     if (rebuilt.length > 0) {
@@ -656,19 +731,18 @@ function startGame(seed, sizeKey) {
     minimap.draw({
       player, camX, camY,
       screenW: app.screen.width, screenH: app.screen.height,
-      shopCol: spawnCol, shopRow: startRow, goalRow,
+      bases, goalRow: IS_INFINITE ? -1 : goalRow,
     });
 
-    // meta
+    // Meta solo en modos finitos (en infinito no hay límite)
     const depth = Math.max(0, Math.floor((player.y + player.h - startY) / CELL));
-    if (!won && depth >= GOAL) {
+    if (!IS_INFINITE && !won && depth >= GOAL) {
       won = true;
       sound.goal();
       showBanner(`¡Llegaste a ${GOAL} m en ${mmss(playTime)}! Podés seguir explorando`);
       debug.log(`Meta alcanzada en ${mmss(playTime)}`);
     }
 
-    // HUD (solo se toca el DOM si el contenido cambió)
     msgTimer -= dt;
     if (msgTimer <= 0) msg = '';
     bannerTimer -= dt;
@@ -680,12 +754,18 @@ function startGame(seed, sizeKey) {
     const fuelEmpty = fuelCur <= 0;
     const pbx = Math.floor(pcx / CELL);
     const pby = Math.floor(pcy / CELL);
-    const biome = pbx >= 0 && pby >= 0 && pbx < COLS && pby < ROWS ? BIOME_NAMES[biomes[pby * COLS + pbx]] : '-';
+    const biome = world.inBounds(pbx, pby)
+      ? BIOME_NAMES[IS_INFINITE ? world.biomeAt(pbx, pby) : biomes[pby * COLS + pbx]]
+      : '-';
+
+    const depthText = IS_INFINITE
+      ? `Profundidad: ${depth} m (Infinito)`
+      : `Profundidad: ${depth} m de ${GOAL} m${won ? ' (lograda)' : ''}`;
 
     const lines = [
       `<div class="hud-line">Seed: ${seed} · ${SIZES[sizeKey].name}</div>`,
       `<div class="hud-line">Bioma: ${biome}</div>`,
-      `<div class="hud-line">Profundidad: ${depth} m de ${GOAL} m${won ? ' (lograda)' : ''}</div>`,
+      `<div class="hud-line">${depthText}</div>`,
       `<div class="hud-line">Tiempo: ${mmss(playTime)}</div>`,
       `<div class="hud-line">Dinero: $${stats.money}</div>`,
       `<div class="hud-line">Almacén: ${stashCount(stats)} minerales ($${stashValue(stats)})</div>`,
@@ -697,10 +777,11 @@ function startGame(seed, sizeKey) {
           `<span class="fuel-val">${fuelEmpty ? 'VACÍO' : `${fuelCur}/${player.fuelMax}`}</span>` +
         `</div>` +
       `</div>`,
-      `<div class="hud-line">Dinamita: ${stats.dynamite}</div>`,
+      `<div class="hud-line">Dinamita: ${stats.dynamite} · Puestos: ${stats.outposts} (G)</div>`,
+      bases.length > 1 ? `<div class="hud-line">Bases: ${bases.length} (T teletransporta)</div>` : '',
       availableShapes(stats).length > 1 ? `<div class="hud-line">Forma: ${SHAPE_NAMES[stats.shape]} (Q cambia)</div>` : '',
       laserPierce(stats) > 0 ? `<div class="hud-line">Láser: F (rompe ${laserPierce(stats)} celdas)</div>` : '',
-      near ? `<div class="hud-line">Apretá E para vender y mejorar</div>` : '',
+      nearBase ? `<div class="hud-line">Apretá E para abrir ${nearBase.name}</div>` : '',
       msg ? `<div class="${fuelEmpty ? 'hud-warn' : 'hud-msg'}">${msg}</div>` : '',
     ].filter(Boolean).join('');
 
@@ -708,7 +789,6 @@ function startGame(seed, sizeKey) {
 
     debug.frame(dt, debugInfo);
 
-    // temblor de cámara por explosiones (se aplica al final para no afectar el cálculo del mouse)
     if (shake > 0) {
       worldLayer.x += (Math.random() - 0.5) * 2 * shake;
       worldLayer.y += (Math.random() - 0.5) * 2 * shake;
@@ -744,7 +824,6 @@ function startGame(seed, sizeKey) {
   };
 }
 
-// ---------- Menú ----------
 let lastPlayedSeed = null;
 
 function play() {
@@ -790,7 +869,7 @@ async function init() {
   seedInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') play(); });
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape' || !currentGame) return;
-    if (currentGame.closePanel()) return; // Esc primero cierra la tienda
+    if (currentGame.closePanel()) return;
     currentGame.togglePause();
   });
 }

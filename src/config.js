@@ -1,17 +1,21 @@
 export const CELL = 16;    // tamaño de cada celda en píxeles
 export const CHUNK = 16;   // celdas por lado de cada chunk
 
-// Tamaños de mundo (en celdas, múltiplos de CHUNK). COLS, ROWS y CHUNKS_X/Y cambian con setWorldSize.
+// Tamaños de mundo. 'infinite' genera chunks on-demand sin límites en X ni hacia abajo.
 export const SIZES = {
-  small: { name: 'Pequeño', cols: 192, rows: 128, oreBoost: 1.6 }, // más minerales para compensar el área
-  medium: { name: 'Mediano', cols: 320, rows: 224, oreBoost: 1 },
-  large: { name: 'Grande', cols: 480, rows: 320, oreBoost: 1 },
+  small:    { name: 'Pequeño',  cols: 192, rows: 128, oreBoost: 1.6, infinite: false },
+  medium:   { name: 'Mediano',  cols: 320, rows: 224, oreBoost: 1,   infinite: false },
+  large:    { name: 'Grande',   cols: 480, rows: 320, oreBoost: 1,   infinite: false },
+  infinite: { name: 'Infinito', cols: 320, rows: 224, oreBoost: 1.15, infinite: true },
 };
+
 export let COLS = SIZES.medium.cols;
 export let ROWS = SIZES.medium.rows;
 export let CHUNKS_X = COLS / CHUNK;
 export let CHUNKS_Y = ROWS / CHUNK;
 export let ORE_BOOST = SIZES.medium.oreBoost;
+export let IS_INFINITE = false;
+
 export function setWorldSize(key) {
   const s = SIZES[key] || SIZES.medium;
   COLS = s.cols;
@@ -19,9 +23,11 @@ export function setWorldSize(key) {
   CHUNKS_X = COLS / CHUNK;
   CHUNKS_Y = ROWS / CHUNK;
   ORE_BOOST = s.oreBoost;
+  IS_INFINITE = Boolean(s.infinite);
 }
-// meta: profundidad (en celdas) que hay que alcanzar, proporcional al alto del mundo
-export const goalDepth = () => Math.round(ROWS * 0.67);
+
+// meta: en modo infinito es el primer hito (250 m), luego podés seguir bajando sin fin
+export const goalDepth = () => (IS_INFINITE ? 250 : Math.round(ROWS * 0.67));
 
 // Tipos de celda
 export const AIR = 0;
@@ -44,7 +50,6 @@ export const CRYSTAL = 16;   // cristal de energía
 export const RUBY = 17;
 export const EMERALD = 18;
 
-// Color de cada tipo (el aire no se dibuja)
 export const COLORS = {
   [DIRT]: 0x8b5a2b,
   [STONE]: 0x6b6b6b,
@@ -88,8 +93,6 @@ export const NAMES = {
   [EMERALD]: 'Esmeralda',
 };
 
-// Dureza de cada material. El pico rompe celdas con dureza <= su poder.
-// Poder del pico: 2 (base), 3 (acero), 4 (diamante), 5 (obsidiana).
 export const HARDNESS = {
   [DIRT]: 1,
   [SAND]: 1,
@@ -107,15 +110,13 @@ export const HARDNESS = {
   [EMERALD]: 3,
   [OBSIDIAN]: 4,
   [MAGMA_ROCK]: 5,
-  [BEDROCK]: 99,   // nada la rompe
+  [BEDROCK]: 99,
   [PLATFORM]: 99,
 };
 export const DIG_BASE_POWER = 2;
 
-// Capas de profundidad (fracción de la altura del mundo; el límite ondula con ruido Perlin)
 export const LAYERS = { deep: 0.5, magma: 0.78 };
 
-// Biomas (ruido Perlin 2D). Cambian el tono de las rocas y las probabilidades de minerales.
 export const NORMAL = 0;
 export const ARENOSO = 1;
 export const VOLCANICO = 2;
@@ -129,9 +130,6 @@ export const BIOME_TINT = [
 ];
 export const TINTABLE = [DIRT, STONE, GRANITE, DEEPROCK, MAGMA_ROCK, SAND, GRAVEL];
 
-// Minerales y bolsas. chance = probabilidad por celda de roca de empezar una veta;
-// minDepth y maxDepth = fracción de la altura del mundo; size = largo de la veta;
-// fat = bolsa gorda; biome = multiplicador de la chance según el bioma.
 export const ORES = [
   { type: IRON, chance: 0.008, minDepth: 0.28, maxDepth: 0.7, size: 5, biome: { [ARENOSO]: 0.7 } },
   { type: COPPER, chance: 0.006, minDepth: 0.3, maxDepth: 0.7, size: 4 },
@@ -142,7 +140,6 @@ export const ORES = [
   { type: EMERALD, chance: 0.0008, minDepth: 0.62, maxDepth: 0.97, size: 2, biome: { [CRISTALINO]: 2 } },
   { type: DIAMOND, chance: 0.0012, minDepth: 0.62, maxDepth: 0.98, size: 2 },
   { type: OBSIDIAN, chance: 0.0014, minDepth: 0.5, maxDepth: 0.98, size: 7, fat: true, biome: { [VOLCANICO]: 4 } },
-  // bolsas de arena y grava: no se venden
   { type: SAND, chance: 0.0012, minDepth: 0.4, maxDepth: 0.75, size: 40, fat: true, biome: { [ARENOSO]: 6, [VOLCANICO]: 0 } },
   { type: GRAVEL, chance: 0.0008, minDepth: 0.5, maxDepth: 0.8, size: 28, fat: true, biome: { [ARENOSO]: 3 } },
 ];
@@ -154,10 +151,9 @@ export const ORE_NAME = {
   [IRON]: 'Hierro', [COPPER]: 'Cobre', [SILVER]: 'Plata', [GOLD]: 'Oro', [CRYSTAL]: 'Cristal',
   [RUBY]: 'Rubí', [EMERALD]: 'Esmeralda', [DIAMOND]: 'Diamante', [OBSIDIAN]: 'Obsidiana',
 };
-export const CRYSTAL_FUEL = 15;  // combustible que da cada cristal al juntarlo
-export const SELL_RANGE = 5;     // distancia a la tienda, en celdas
+export const CRYSTAL_FUEL = 15;
+export const SELL_RANGE = 5;
 
-// Jugador (tamaños en celdas, velocidades en celdas/seg)
 export const PLAYER_W = 0.8;
 export const PLAYER_H = 1.8;
 export const PLAYER_COLOR = 0x3fa9ff;
@@ -166,35 +162,29 @@ export const GRAVITY = 110;
 export const JUMP_SPEED = 26;
 export const MAX_FALL = 40;
 
-// Jetpack
 export const FUEL_MAX = 100;
-export const FUEL_PER_LEVEL = 30; // lo que suma cada mejora del tanque
-export const FUEL_USE = 12;       // combustible que gasta por segundo volando
-export const FUEL_REGEN = 25;     // combustible que recupera por segundo en el suelo
-export const THRUST = 200;        // empuje hacia arriba (la gravedad es 110)
-export const FLY_SPEED = 10;      // velocidad máxima de subida, en celdas/seg
+export const FUEL_PER_LEVEL = 30;
+export const FUEL_USE = 12;
+export const FUEL_REGEN = 25;
+export const THRUST = 200;
+export const FLY_SPEED = 10;
 
-// Mochila
 export const CARGO_BASE = 30;
 export const CARGO_PER_LEVEL = 20;
 
-// Excavación
-export const DIG_RADIUS = 1.5;  // radio base, en celdas (las mejoras lo agrandan)
+export const DIG_RADIUS = 1.5;
 export const DIG_REACH = 6;
 export const DIG_DELAY = 0.08;
-export const FORTUNE_PER_LEVEL = 0.15; // chance extra de doble mineral por nivel
+export const FORTUNE_PER_LEVEL = 0.15;
 
-// Dinamita (click derecho): explota con un radio grande y rompe hasta granito y roca profunda
 export const DYNAMITE = { price: 40, pack: 3, radius: 6, fuse: 1.8, start: 2, power: 3 };
+export const OUTPOST = { price: 500, start: 1 }; // Puesto avanzado subterráneo (tecla G)
 
-// Láser (tecla F): rayo recto que atraviesa celdas. pierce = celdas que rompe según el nivel.
 export const LASER = { fuel: 15, cooldown: 0.5, range: 40, pierce: [12, 20, 30] };
 
-// Formas del pico (tecla Q las cambia). Cada nivel de "Formas" desbloquea la siguiente.
 export const SHAPE_ORDER = ['circle', 'cross', 'drill', 'cone'];
 export const SHAPE_NAMES = { circle: 'Círculo', cross: 'Cruz', drill: 'Taladro', cone: 'Cono' };
 
-// Mejoras de la tienda (solo cuestan dinero).
 const c = (money) => ({ money, items: {} });
 export const UPGRADES = {
   radius: {
@@ -231,12 +221,7 @@ export const UPGRADES = {
   },
 };
 
-// Simulación del terreno (autómata celular)
-export const LOOSE = [SAND, GRAVEL];       // caen siempre que tengan aire debajo
-// Derrumbes: ancho máximo (en celdas) que puede quedar sin apoyo según la dureza.
-// Los materiales que no figuran acá (dureza 2 o más) nunca se derrumban.
+export const LOOSE = [SAND, GRAVEL];
 export const SPAN_BY_HARDNESS = { 1: 4 };
-export const SIM_HZ = 30;                  // pasos de simulación por segundo
-
-// Minimapa: radio que se descubre alrededor del jugador, en celdas
+export const SIM_HZ = 30;
 export const MINIMAP_RADIUS = 16;

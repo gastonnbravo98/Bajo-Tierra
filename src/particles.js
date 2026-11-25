@@ -1,5 +1,5 @@
 import {
-  CELL, COLS, ROWS, AIR, MAGMA_ROCK, ARENOSO, VOLCANICO, CRISTALINO,
+  CELL, COLS, AIR, MAGMA_ROCK, ARENOSO, VOLCANICO, CRISTALINO,
 } from './config.js';
 
 const MAX = 350;
@@ -47,11 +47,18 @@ export function createParticles() {
         const wy = camY + Math.random() * screenH;
         const cx = Math.floor(wx / CELL);
         const cy = Math.floor(wy / CELL);
-        if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) continue;
 
-        const idx = cy * COLS + cx;
-        const cell = world[idx];
-        const biome = biomes[idx];
+        let cell = AIR;
+        let biome = 0;
+
+        if (cy < 0) {
+          cell = AIR;
+        } else if (world.inBounds(cx, cy)) {
+          cell = world.get(cx, cy);
+          biome = world.infinite ? world.biomeAt(cx, cy) : (biomes ? biomes[cy * COLS + cx] : 0);
+        } else {
+          continue;
+        }
 
         if (cy < startRow - 2 && cell === AIR) {
           // Nubes suaves en el cielo
@@ -118,7 +125,7 @@ export function createParticles() {
         p.y += p.vy * dt;
         if (p.kind === 'spark') p.x += Math.sin(p.life * 7) * 8 * dt;
 
-        const fade = Math.sin((1 - p.life / p.max) * Math.PI); // aparece y se desvanece suave
+        const fade = Math.sin((1 - p.life / p.max) * Math.PI);
         const a = p.alpha * fade;
         if (p.kind === 'cloud') {
           ambGfx.roundRect(p.x, p.y, p.w, p.h, 5).fill({ color: p.color, alpha: a });

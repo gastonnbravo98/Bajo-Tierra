@@ -170,18 +170,44 @@ export function updatePlayerSprite(sprite, p, targetWorldX, digging, levels, dt)
   }
 }
 
-// Fondo: el cielo es el color del canvas; debajo de la superficie original hay una
-// "pared de cueva" oscura que se ve en los túneles que cavás. Más profundo, más oscura.
+// Fondo: en modo finito se dibuja una vez; en modo infinito acompaña la cámara sin fin.
 export function createBackground(world) {
   const g = new PIXI.Graphics();
+  const colors = [0x3d2a1a, 0x33231a, 0x2a1d18, 0x211719, 0x19121a, 0x120d14];
+  const bands = colors.length;
+
+  if (world.infinite) {
+    let lastSig = '';
+    g.updateInfinite = (camX, camY, screenW, screenH, startRow) => {
+      const x0 = Math.floor(camX / CELL) - 2;
+      const x1 = Math.ceil((camX + screenW) / CELL) + 2;
+      const y0 = Math.max(0, Math.floor(camY / CELL) - 2);
+      const y1 = Math.ceil((camY + screenH) / CELL) + 2;
+      const sig = `${x0},${x1},${y0},${y1}`;
+      if (sig === lastSig) return;
+      lastSig = sig;
+
+      g.clear();
+      if (y1 <= y0) return;
+
+      for (let x = x0; x <= x1; x++) {
+        const sy = Math.max(y0, world.surfaceAt(x));
+        if (y1 <= sy) continue;
+        const depth = Math.max(0, sy - startRow);
+        const band = Math.min(bands - 1, Math.floor(depth / 38));
+        g.rect(x * CELL, sy * CELL, CELL, (y1 - sy) * CELL);
+        g.fill(colors[band]);
+      }
+    };
+    return g;
+  }
+
   const surface = new Array(COLS);
   for (let x = 0; x < COLS; x++) {
     let s = 0;
-    while (s < ROWS && world[s * COLS + x] === AIR) s++;
+    while (s < ROWS && world.get(x, s) === AIR) s++;
     surface[x] = s;
   }
-  const colors = [0x3d2a1a, 0x33231a, 0x2a1d18, 0x211719, 0x19121a, 0x120d14];
-  const bands = colors.length;
   for (let b = 0; b < bands; b++) {
     const bandTop = Math.floor((ROWS * b) / bands);
     const bandBottom = Math.floor((ROWS * (b + 1)) / bands);
@@ -195,16 +221,18 @@ export function createBackground(world) {
   return g;
 }
 
-// Línea punteada a la profundidad de la meta
-export function createGoalLine(y) {
+// Línea punteada a la profundidad de la meta (se extiende en infinito)
+export function createGoalLine(y, infinite = false) {
   const c = new PIXI.Container();
   const g = new PIXI.Graphics();
-  for (let x = 0; x < COLS * CELL; x += 24) g.rect(x, y - 1, 12, 3);
+  const xStart = infinite ? -2000 * CELL : 0;
+  const xEnd = infinite ? 2320 * CELL : COLS * CELL;
+  for (let x = xStart; x < xEnd; x += 24) g.rect(x, y - 1, 12, 3);
   g.fill({ color: 0xffe066, alpha: 0.75 });
   c.addChild(g);
 
   const label = new PIXI.Text({
-    text: 'META',
+    text: infinite ? 'HITO 250 m' : 'META',
     style: { fontFamily: 'sans-serif', fontSize: 14, fill: 0xffe066 },
   });
   label.position.set((COLS / 2) * CELL, y - 20);
@@ -290,6 +318,43 @@ export function createShop(col, groundY) {
   c.addChild(label);
 
   c.position.set((col + 0.5) * CELL - w / 2, groundY - (roofH + wallH));
+  return c;
+}
+
+// Cápsula de Puesto Avanzado subterráneo (tecla G)
+export function createOutpost(col, groundY, index) {
+  const c = new PIXI.Container();
+  const w = 2.6 * CELL;
+  const h = 2.1 * CELL;
+  const g = new PIXI.Graphics();
+
+  // Patas de anclaje
+  g.rect(2, h - 4, 6, 4).fill(0x4f5561);
+  g.rect(w - 8, h - 4, 6, 4).fill(0x4f5561);
+  // Cuerpo metálico con franja celeste
+  g.roundRect(3, 4, w - 6, h - 7, 4).fill(0x2b3a4a);
+  g.rect(3, 11, w - 6, 4).fill(0x4fe3ff);
+  // Baliza superior
+  g.rect(w / 2 - 1, 0, 2, 4).fill(0xdfe6ee);
+  g.circle(w / 2, 0, 3).fill(0x4fe3ff);
+
+  c.addChild(g);
+
+  const label = new PIXI.Text({
+    text: `BASE #${index}`,
+    style: {
+      fontFamily: 'sans-serif',
+      fontSize: 10,
+      fontWeight: 'bold',
+      fill: 0x4fe3ff,
+      stroke: { color: 0x101820, width: 3 },
+    },
+  });
+  label.anchor.set(0.5, 1);
+  label.position.set(w / 2, -3);
+  c.addChild(label);
+
+  c.position.set((col + 0.5) * CELL - w / 2, groundY - h);
   return c;
 }
 
