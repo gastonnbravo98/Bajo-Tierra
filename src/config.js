@@ -1,11 +1,11 @@
 export const CELL = 16;    // tamaño de cada celda en píxeles
 export const CHUNK = 16;   // celdas por lado de cada chunk
 
-// Tamaños de mundo. 'infinite' genera chunks on-demand sin límites en X ni hacia abajo.
+// Tamaños de mundo
 export const SIZES = {
-  small:    { name: 'Pequeño',  cols: 192, rows: 128, oreBoost: 1.6, infinite: false },
-  medium:   { name: 'Mediano',  cols: 320, rows: 224, oreBoost: 1,   infinite: false },
-  large:    { name: 'Grande',   cols: 480, rows: 320, oreBoost: 1,   infinite: false },
+  small:    { name: 'Pequeño',  cols: 192, rows: 128, oreBoost: 1.6,  infinite: false },
+  medium:   { name: 'Mediano',  cols: 320, rows: 224, oreBoost: 1,    infinite: false },
+  large:    { name: 'Grande',   cols: 480, rows: 320, oreBoost: 1,    infinite: false },
   infinite: { name: 'Infinito', cols: 320, rows: 224, oreBoost: 1.15, infinite: true },
 };
 
@@ -15,6 +15,7 @@ export let CHUNKS_X = COLS / CHUNK;
 export let CHUNKS_Y = ROWS / CHUNK;
 export let ORE_BOOST = SIZES.medium.oreBoost;
 export let IS_INFINITE = false;
+export let IS_HARD = false;
 
 export function setWorldSize(key) {
   const s = SIZES[key] || SIZES.medium;
@@ -26,7 +27,10 @@ export function setWorldSize(key) {
   IS_INFINITE = Boolean(s.infinite);
 }
 
-// meta: en modo infinito es el primer hito (250 m), luego podés seguir bajando sin fin
+export function setDifficulty(mode) {
+  IS_HARD = mode === 'hard';
+}
+
 export const goalDepth = () => (IS_INFINITE ? 250 : Math.round(ROWS * 0.67));
 
 // Tipos de celda
@@ -38,17 +42,22 @@ export const GOLD = 4;
 export const GRANITE = 5;
 export const DIAMOND = 6;
 export const BEDROCK = 7;
-export const PLATFORM = 8;   // plataforma indestructible bajo la tienda
-export const SAND = 9;       // cae y se desparrama
-export const GRAVEL = 10;    // cae derecho y se apila
-export const DEEPROCK = 11;  // roca profunda
+export const PLATFORM = 8;
+export const SAND = 9;
+export const GRAVEL = 10;
+export const DEEPROCK = 11;
 export const OBSIDIAN = 12;
 export const MAGMA_ROCK = 13;
 export const COPPER = 14;
 export const SILVER = 15;
-export const CRYSTAL = 16;   // cristal de energía
+export const CRYSTAL = 16;
 export const RUBY = 17;
 export const EMERALD = 18;
+export const LAVA = 19;      // fluido caliente: cae, se desparrama y quema
+export const GAS = 20;       // gas tóxico/explosivo: sube al techo y detona con fuego
+
+// Celdas transitables que no frenan el movimiento físico del jugador
+export const FLUIDS = new Set([AIR, LAVA, GAS]);
 
 export const COLORS = {
   [DIRT]: 0x8b5a2b,
@@ -69,6 +78,8 @@ export const COLORS = {
   [CRYSTAL]: 0xb967ff,
   [RUBY]: 0xe0245e,
   [EMERALD]: 0x2ecc71,
+  [LAVA]: 0xff5400,
+  [GAS]: 0x7ae582,
 };
 
 export const NAMES = {
@@ -91,6 +102,8 @@ export const NAMES = {
   [CRYSTAL]: 'Cristal',
   [RUBY]: 'Rubí',
   [EMERALD]: 'Esmeralda',
+  [LAVA]: 'Lava',
+  [GAS]: 'Gas tóxico',
 };
 
 export const HARDNESS = {
@@ -112,6 +125,8 @@ export const HARDNESS = {
   [MAGMA_ROCK]: 5,
   [BEDROCK]: 99,
   [PLATFORM]: 99,
+  [LAVA]: 99,
+  [GAS]: 99,
 };
 export const DIG_BASE_POWER = 2;
 
@@ -142,7 +157,11 @@ export const ORES = [
   { type: OBSIDIAN, chance: 0.0014, minDepth: 0.5, maxDepth: 0.98, size: 7, fat: true, biome: { [VOLCANICO]: 4 } },
   { type: SAND, chance: 0.0012, minDepth: 0.4, maxDepth: 0.75, size: 40, fat: true, biome: { [ARENOSO]: 6, [VOLCANICO]: 0 } },
   { type: GRAVEL, chance: 0.0008, minDepth: 0.5, maxDepth: 0.8, size: 28, fat: true, biome: { [ARENOSO]: 3 } },
+  // Peligros exclusivos de Modo Difícil
+  { type: GAS, chance: 0.0011, minDepth: 0.38, maxDepth: 0.92, size: 16, fat: true, hardOnly: true },
+  { type: LAVA, chance: 0.0013, minDepth: 0.56, maxDepth: 0.98, size: 18, fat: true, hardOnly: true, biome: { [VOLCANICO]: 4, [CRISTALINO]: 0.2 } },
 ];
+
 export const ORE_VALUE = {
   [IRON]: 10, [COPPER]: 15, [SILVER]: 30, [GOLD]: 50, [CRYSTAL]: 70,
   [RUBY]: 100, [EMERALD]: 130, [DIAMOND]: 200, [OBSIDIAN]: 60,
@@ -162,6 +181,12 @@ export const GRAVITY = 110;
 export const JUMP_SPEED = 26;
 export const MAX_FALL = 40;
 
+// Vida y daño (Modo Difícil)
+export const HP_MAX = 100;
+export const HP_REGEN_BASE = 28;
+export const FALL_SAFE_SPEED = 33;
+export const FALL_DMG_MULT = 3.5;
+
 export const FUEL_MAX = 100;
 export const FUEL_PER_LEVEL = 30;
 export const FUEL_USE = 12;
@@ -178,7 +203,7 @@ export const DIG_DELAY = 0.08;
 export const FORTUNE_PER_LEVEL = 0.15;
 
 export const DYNAMITE = { price: 40, pack: 3, radius: 6, fuse: 1.8, start: 2, power: 3 };
-export const OUTPOST = { price: 500, start: 1 }; // Puesto avanzado subterráneo (tecla G)
+export const OUTPOST = { price: 500, start: 1 };
 
 export const LASER = { fuel: 15, cooldown: 0.5, range: 40, pierce: [12, 20, 30] };
 
@@ -218,6 +243,16 @@ export const UPGRADES = {
     name: 'Láser', max: 3,
     desc: ['Rayo con tecla F, gasta combustible (rompe 12 celdas)', 'Rompe 20 celdas', 'Rompe 30 celdas'],
     cost: [c(900), c(1600), c(2800)],
+  },
+  flashlight: {
+    name: 'Linterna táctica', max: 3, hardOnly: true,
+    desc: ['Amplía el cono de luz en la oscuridad', 'Alcance medio + halo', 'Alcance máximo'],
+    cost: [c(120), c(320), c(700)],
+  },
+  suit: {
+    name: 'Traje ambiental', max: 3, hardOnly: true,
+    desc: ['Reduce 40% daño de gas/calor y consumo térmico', 'Reduce 70% daño y calor', 'Inmune al gas y calor ambiental'],
+    cost: [c(220), c(550), c(1200)],
   },
 };
 

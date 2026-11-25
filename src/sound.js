@@ -9,6 +9,7 @@ let jetpackNodes = null;
 let musicTimer = null;
 let musicStep = 0;
 let musicPlaying = false;
+let deepMode = false;
 
 // Estado persistente
 let volume = 0.8;
@@ -52,7 +53,6 @@ function ensureCtx() {
   return ctx;
 }
 
-// Buffer reutilizable de 1 segundo de ruido blanco (para explosiones y jetpack)
 function getNoiseBuffer(ac) {
   if (!noiseBuf) {
     noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
@@ -80,7 +80,7 @@ function tone(ac, dest, { type = 'sine', f0 = 440, f1 = f0, dur = 0.1, gain = 0.
   osc.stop(t + dur + 0.01);
 }
 
-// Secuencia ambiental subterránea en Re menor (frecuencias en Hz, 0 = silencio)
+// ---------- Música normal (superficie y capas medias) ----------
 const MELODY = [
   293.66, 0, 349.23, 440.00,  392.00, 0, 349.23, 329.63,
   293.66, 0, 261.63, 293.66,  220.00, 0, 0,      0,
@@ -94,26 +94,66 @@ const BASS = [
   116.54, 0, 130.81, 0,  146.83, 0, 0, 0,
 ];
 
+// ---------- Música tenebrosa (profundidad >= 85m o bioma volcánico) ----------
+const DEEP_MELODY = [
+  146.83, 0, 0, 155.56,  0, 0, 138.59, 0,
+  110.00, 0, 0, 0,       116.54, 0, 110.00, 0,
+  146.83, 0, 174.61, 0,  155.56, 0, 0, 138.59,
+  110.00, 0, 103.83, 0,  73.42,  0, 0, 0,
+];
+const DEEP_BASS = [
+  73.42, 0, 0, 0,  73.42, 0, 77.78, 0,
+  55.00, 0, 0, 0,  58.27, 0, 55.00, 0,
+  73.42, 0, 0, 0,  69.30, 0, 0,     0,
+  55.00, 0, 51.91, 0, 36.71, 0, 0,  0,
+];
+
 function playMusicStep() {
   if (!musicPlaying || musicMuted || volume <= 0) return;
   const ac = ensureCtx();
   if (!ac || ac.state !== 'running') return;
 
-  const idx = musicStep % MELODY.length;
-  const note = MELODY[idx];
-  const bass = BASS[idx];
+  if (deepMode) {
+    const idx = musicStep % DEEP_MELODY.length;
+    const note = DEEP_MELODY[idx];
+    const bass = DEEP_BASS[idx];
 
-  if (note > 0) {
-    tone(ac, musicGain, { type: 'triangle', f0: note, dur: 0.42, gain: 0.14 });
-    // Armónico suave tipo cristal en tiempos fuertes
-    if (idx % 4 === 0) {
-      tone(ac, musicGain, { type: 'sine', f0: note * 2, dur: 0.55, gain: 0.045, delay: 0.02 });
+    // Dron grave constante cada 8 tiempos
+    if (idx % 8 === 0) {
+      tone(ac, musicGain, { type: 'sawtooth', f0: 55.0, f1: 53.5, dur: 2.2, gain: 0.045 });
+    }
+    if (note > 0) {
+      // Nota principal grave con leve caída de afinación inquietante
+      tone(ac, musicGain, { type: 'sine', f0: note, f1: note * 0.985, dur: 0.85, gain: 0.14 });
+      // Eco agudo disonante esporádico
+      if (idx % 6 === 3) {
+        tone(ac, musicGain, { type: 'triangle', f0: note * 2.98, f1: note * 2.92, dur: 0.7, gain: 0.03, delay: 0.08 });
+      }
+    }
+    if (bass > 0) {
+      tone(ac, musicGain, { type: 'triangle', f0: bass, dur: 0.9, gain: 0.22 });
+    }
+  } else {
+    const idx = musicStep % MELODY.length;
+    const note = MELODY[idx];
+    const bass = BASS[idx];
+
+    if (note > 0) {
+      tone(ac, musicGain, { type: 'triangle', f0: note, dur: 0.42, gain: 0.14 });
+      if (idx % 4 === 0) {
+        tone(ac, musicGain, { type: 'sine', f0: note * 2, dur: 0.55, gain: 0.045, delay: 0.02 });
+      }
+    }
+    if (bass > 0) {
+      tone(ac, musicGain, { type: 'sine', f0: bass, dur: 0.5, gain: 0.18 });
     }
   }
-  if (bass > 0) {
-    tone(ac, musicGain, { type: 'sine', f0: bass, dur: 0.5, gain: 0.18 });
-  }
   musicStep++;
+}
+
+function restartMusicTimer() {
+  if (musicTimer) clearInterval(musicTimer);
+  musicTimer = setInterval(playMusicStep, deepMode ? 350 : 260);
 }
 
 export const sound = {
@@ -142,22 +182,50 @@ export const sound = {
     return musicMuted;
   },
 
+  setDeepMode(isDeep) {
+    const next = Boolean(isDeep);
+    if (deepMode === next) return;
+    deepMode = next;
+    if (musicPlaying) restartMusicTimer();
+  },
+
   startMusic() {
     musicPlaying = true;
     if (musicTimer) return;
     musicStep = 0;
-    musicTimer = setInterval(playMusicStep, 260);
+    restartMusicTimer();
   },
 
   stopMusic() {
     musicPlaying = false;
+    deepMode = false;
     if (musicTimer) {
       clearInterval(musicTimer);
       musicTimer = null;
     }
   },
 
-  // Golpe de pico: tono según dureza + brillo metálico si hubo mineral
+  // Chasquido de detector de gas cercano (intensity: 0.1 a 1)
+  gasClick(intensity = 0.5) {
+    if (sfxMuted) return;
+    const ac = ensureCtx();
+    if (!ac) return;
+    const g = 0.04 + intensity * 0.09;
+    const pitch = 1400 + intensity * 650 + (Math.random() - 0.5) * 180;
+    tone(ac, sfxGain, { type: 'square', f0: pitch, f1: pitch * 0.45, dur: 0.022, gain: g });
+  },
+
+  // Burbujeo grave de lava cercana (intensity: 0.1 a 1)
+  lavaBubble(intensity = 0.5) {
+    if (sfxMuted) return;
+    const ac = ensureCtx();
+    if (!ac) return;
+    const g = 0.05 + intensity * 0.11;
+    const base = 58 + Math.random() * 22;
+    tone(ac, sfxGain, { type: 'sine', f0: base, f1: base * 2.1, dur: 0.14, gain: g });
+    tone(ac, sfxGain, { type: 'triangle', f0: base * 1.8, f1: base * 0.8, dur: 0.11, gain: g * 0.6, delay: 0.09 });
+  },
+
   dig(hardness = 1, hasOre = false) {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -170,7 +238,6 @@ export const sound = {
     }
   },
 
-  // Rebote cuando el material es demasiado duro
   blocked() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -178,7 +245,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'square', f0: 260, f1: 190, dur: 0.055, gain: 0.08 });
   },
 
-  // Colocar dinamita
   bombPlace() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -186,7 +252,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'sine', f0: 520, f1: 380, dur: 0.07, gain: 0.12 });
   },
 
-  // Detonación de dinamita (ruido filtrado + impacto grave)
   explosion() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -215,7 +280,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'sine', f0: 110, f1: 28, dur: 0.45, gain: 0.3 });
   },
 
-  // Disparo láser (tecla F)
   laser() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -224,7 +288,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'sine', f0: 900, f1: 120, dur: 0.16, gain: 0.12 });
   },
 
-  // Depositar minerales al pasar por la cabaña
   deposit() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -232,7 +295,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'sine', f0: 440, f1: 660, dur: 0.09, gain: 0.1 });
   },
 
-  // Vender minerales o comprar mejoras
   coin() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -241,7 +303,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'triangle', f0: 1318, dur: 0.14, gain: 0.13, delay: 0.065 });
   },
 
-  // Alerta de tanque vacío
   noFuel() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -250,7 +311,6 @@ export const sound = {
     tone(ac, sfxGain, { type: 'square', f0: 180, f1: 140, dur: 0.1, gain: 0.08, delay: 0.1 });
   },
 
-  // Alcanzar la profundidad meta
   goal() {
     if (sfxMuted) return;
     const ac = ensureCtx();
@@ -260,7 +320,6 @@ export const sound = {
     });
   },
 
-  // Propulsión continua mientras vuela con el jetpack
   setJetpack(active) {
     if (!active || sfxMuted) {
       this.stopJetpack();

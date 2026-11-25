@@ -82,18 +82,15 @@ export function createPlayerSprite(p) {
   rig.addChild(arm);
 
   function redrawEquipment(powerLv, fuelLv) {
-    // Hoja del pico según mejora
     const tier = PICK_TIERS[Math.min(powerLv, PICK_TIERS.length - 1)];
     pickHead.clear();
     pickHead.arc(w * 0.29, -h * 0.18, w * 0.38, -Math.PI * 0.85, -Math.PI * 0.15)
       .stroke({ width: tier.width, color: tier.color });
     if (powerLv >= 2) {
-      // Brillo en el filo para diamante y obsidiana
       pickHead.arc(w * 0.29, -h * 0.18, w * 0.38, -Math.PI * 0.65, -Math.PI * 0.35)
         .stroke({ width: 1, color: 0xffffff, alpha: 0.85 });
     }
 
-    // Jetpack según nivel de tanque
     const tankW = w * (0.34 + fuelLv * 0.03);
     jetpack.clear();
     jetpack.roundRect(-w * 0.28 - tankW, h * 0.32, tankW, h * 0.34, 2).fill(0x5c677d);
@@ -110,7 +107,6 @@ export function createPlayerSprite(p) {
     redrawEquipment,
   };
 
-  // Posición exacta de la boquilla del jetpack en coordenadas del mundo
   root.getNozzlePos = () => ({
     x: root.x + w / 2 - w * 0.45 * rig.scale.x,
     y: root.y + h * 0.68,
@@ -123,7 +119,6 @@ export function updatePlayerSprite(sprite, p, targetWorldX, digging, levels, dt)
   const a = sprite.anim;
   sprite.position.set(p.x, p.y);
 
-  // Actualizar apariencia del equipo solo si subió de nivel
   const powerLv = levels?.power ?? 0;
   const fuelLv = levels?.fuel ?? 0;
   if (powerLv !== a.lastPower || fuelLv !== a.lastFuel) {
@@ -132,7 +127,6 @@ export function updatePlayerSprite(sprite, p, targetWorldX, digging, levels, dt)
     a.redrawEquipment(powerLv, fuelLv);
   }
 
-  // Orientación: mira hacia el cursor si está cavando, o hacia donde camina
   const centerX = p.x + p.w / 2;
   if (digging) {
     a.rig.scale.x = targetWorldX >= centerX ? 1 : -1;
@@ -140,11 +134,9 @@ export function updatePlayerSprite(sprite, p, targetWorldX, digging, levels, dt)
     a.rig.scale.x = p.vx > 0 ? 1 : -1;
   }
 
-  // Llama del jetpack
   a.flame.visible = p.flying;
   if (p.flying) a.flame.scale.y = 0.85 + Math.random() * 0.35;
 
-  // Animación de piernas (caminar en el suelo vs pose en el aire)
   if (p.onGround && Math.abs(p.vx) > 1) {
     a.walkPhase += dt * 14;
     const angle = Math.sin(a.walkPhase) * 0.65;
@@ -160,7 +152,6 @@ export function updatePlayerSprite(sprite, p, targetWorldX, digging, levels, dt)
     a.backLeg.rotation = 0;
   }
 
-  // Animación del brazo con el pico al cavar
   if (digging) {
     a.swing += dt * 24;
     a.arm.rotation = Math.sin(a.swing) * 0.85;
@@ -170,7 +161,6 @@ export function updatePlayerSprite(sprite, p, targetWorldX, digging, levels, dt)
   }
 }
 
-// Fondo: en modo finito se dibuja una vez; en modo infinito acompaña la cámara sin fin.
 export function createBackground(world) {
   const g = new PIXI.Graphics();
   const colors = [0x3d2a1a, 0x33231a, 0x2a1d18, 0x211719, 0x19121a, 0x120d14];
@@ -221,7 +211,6 @@ export function createBackground(world) {
   return g;
 }
 
-// Línea punteada a la profundidad de la meta (se extiende en infinito)
 export function createGoalLine(y, infinite = false) {
   const c = new PIXI.Container();
   const g = new PIXI.Graphics();
@@ -240,7 +229,6 @@ export function createGoalLine(y, infinite = false) {
   return c;
 }
 
-// Tienda con forma de cabaña de madera apoyada sobre el suelo en `groundY`
 export function createShop(col, groundY) {
   const c = new PIXI.Container();
   const w = 3.4 * CELL;
@@ -249,19 +237,15 @@ export function createShop(col, groundY) {
 
   const g = new PIXI.Graphics();
 
-  // Chimenea de piedra a la izquierda
   g.rect(w * 0.16, 2, CELL * 0.45, roofH * 0.9).fill(0x5a5a66);
   g.rect(w * 0.12, 0, CELL * 0.53, 3).fill(0x3f3f48);
 
-  // Paredes de troncos
   g.rect(4, roofH, w - 8, wallH).fill(0x7a4928);
   for (let y = roofH + 5; y < roofH + wallH - 3; y += 6) {
-    g.rect(4, y, w - 8, 1.5).fill(0x5c3419); // juntas entre tablones
+    g.rect(4, y, w - 8, 1.5).fill(0x5c3419);
   }
-  // Base de piedra
   g.rect(2, roofH + wallH - 4, w - 4, 4).fill(0x4f5561);
 
-  // Puerta de madera con picaporte
   const doorW = CELL * 0.85;
   const doorH = CELL * 1.15;
   const doorX = w * 0.22;
@@ -270,7 +254,6 @@ export function createShop(col, groundY) {
   g.rect(doorX + 1.5, doorY + 1.5, doorW - 3, doorH - 1.5).stroke({ width: 1, color: 0x2e180b });
   g.circle(doorX + doorW - 3, doorY + doorH * 0.55, 1.3).fill(0xffcf5a);
 
-  // Ventana iluminada con marco
   const winS = CELL * 0.65;
   const winX = w * 0.62;
   const winY = roofH + CELL * 0.35;
@@ -279,7 +262,6 @@ export function createShop(col, groundY) {
   g.rect(winX + winS / 2 - 0.5, winY, 1, winS).fill(0x3b200e);
   g.rect(winX, winY + winS / 2 - 0.5, winS, 1).fill(0x3b200e);
 
-  // Techo a dos aguas con alero
   g.poly([
     -2, roofH + 2,
     w / 2, 0,
@@ -294,7 +276,6 @@ export function createShop(col, groundY) {
     w - 2, roofH + 4,
   ]).fill(0x6e2717);
 
-  // Farol cálido colgado junto a la puerta
   const lx = doorX + doorW + 4;
   const ly = doorY + 4;
   g.circle(lx, ly + 2, 10).fill({ color: 0xffcf5a, alpha: 0.2 });
@@ -321,20 +302,16 @@ export function createShop(col, groundY) {
   return c;
 }
 
-// Cápsula de Puesto Avanzado subterráneo (tecla G)
 export function createOutpost(col, groundY, index) {
   const c = new PIXI.Container();
   const w = 2.6 * CELL;
   const h = 2.1 * CELL;
   const g = new PIXI.Graphics();
 
-  // Patas de anclaje
   g.rect(2, h - 4, 6, 4).fill(0x4f5561);
   g.rect(w - 8, h - 4, 6, 4).fill(0x4f5561);
-  // Cuerpo metálico con franja celeste
   g.roundRect(3, 4, w - 6, h - 7, 4).fill(0x2b3a4a);
   g.rect(3, 11, w - 6, 4).fill(0x4fe3ff);
-  // Baliza superior
   g.rect(w / 2 - 1, 0, 2, 4).fill(0xdfe6ee);
   g.circle(w / 2, 0, 3).fill(0x4fe3ff);
 
@@ -358,7 +335,6 @@ export function createOutpost(col, groundY, index) {
   return c;
 }
 
-// Dinamita plantada: cuadrado rojo con mecha (main.js la hace parpadear)
 export function createBomb() {
   const g = new PIXI.Graphics();
   g.rect(-6, -6, 12, 12).fill(0xd62828);
@@ -366,7 +342,6 @@ export function createBomb() {
   return g;
 }
 
-// Efectos especiales: rayos láser multicapa, ondas expansivas de explosión y humo del jetpack
 export function createEffects() {
   const g = new PIXI.Graphics();
   const beams = [];
@@ -403,7 +378,6 @@ export function createEffects() {
       }
       g.clear();
 
-      // Humo del jetpack
       for (let i = puffs.length - 1; i >= 0; i--) {
         const p = puffs[i];
         p.life -= dt;
@@ -414,7 +388,6 @@ export function createEffects() {
         g.circle(p.x, p.y, p.r).fill({ color: 0xd8dee9, alpha: (p.life / p.max) * 0.45 });
       }
 
-      // Ondas expansivas de explosión
       for (let i = waves.length - 1; i >= 0; i--) {
         const w = waves[i];
         w.life -= dt;
@@ -431,7 +404,6 @@ export function createEffects() {
         g.circle(w.x, w.y, r * 0.72).stroke({ width: 2 * alpha, color: 0xffffff, alpha: alpha * 0.65 });
       }
 
-      // Rayos láser con halo exterior y núcleo blanco
       for (let i = beams.length - 1; i >= 0; i--) {
         const b = beams[i];
         b.life -= dt;
@@ -452,7 +424,6 @@ export function createEffects() {
   };
 }
 
-// Textos flotantes (+$200, +1 Diamante, ¡Fortuna!, etc.)
 export function createFloatingTexts() {
   const layer = new PIXI.Container();
   const list = [];
@@ -489,6 +460,73 @@ export function createFloatingTexts() {
         item.vy *= 0.96;
         item.t.alpha = Math.min(1, (item.life / item.max) * 1.6);
       }
+    },
+  };
+}
+
+// Niebla de guerra subterránea con halo personal y cono de linterna (Modo Difícil)
+export function createFogOfWar() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  const texture = PIXI.Texture.from(canvas);
+  const sprite = new PIXI.Sprite(texture);
+
+  return {
+    layer: sprite,
+    update({ camX, camY, screenW, screenH, playerX, playerY, targetX, targetY, depth, flashLevel = 0 }) {
+      sprite.position.set(camX, camY);
+
+      // En superficie hay luz; apenas bajás de 0.5m empieza a oscurecer hasta 97%
+      const darkness = Math.max(0, Math.min(0.97, (depth - 0.5) / 14));
+      sprite.visible = darkness > 0.01;
+      if (!sprite.visible) return;
+
+      const w = Math.max(1, Math.ceil(screenW));
+      const h = Math.max(1, Math.ceil(screenH));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+
+      const px = playerX - camX;
+      const py = playerY - camY;
+      const ang = Math.atan2(targetY - playerY, targetX - playerX);
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = `rgba(5, 6, 10, ${darkness})`;
+      ctx.fillRect(0, 0, w, h);
+
+      // Recortar luz con degradado suave en Canvas 2D (evita fallos de triangulación de .cut() en PixiJS v8)
+      ctx.globalCompositeOperation = 'destination-out';
+
+      // 1. Halo circular alrededor del minero
+      const auraR = (3.2 + flashLevel * 0.9) * CELL;
+      const halo = ctx.createRadialGradient(px, py, auraR * 0.35, px, py, auraR * 1.35);
+      halo.addColorStop(0, 'rgba(0, 0, 0, 1)');
+      halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(px, py, auraR * 1.35, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. Cono direccional de la linterna hacia el cursor
+      const coneLen = (9.5 + flashLevel * 4.5) * CELL;
+      const spread = 0.4 + flashLevel * 0.06;
+      const cone = ctx.createRadialGradient(px, py, auraR * 0.25, px, py, coneLen);
+      cone.addColorStop(0, 'rgba(0, 0, 0, 1)');
+      cone.addColorStop(0.75, 'rgba(0, 0, 0, 0.85)');
+      cone.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = cone;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.arc(px, py, coneLen, ang - spread, ang + spread);
+      ctx.closePath();
+      ctx.fill();
+
+      texture.source.update();
     },
   };
 }

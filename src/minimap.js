@@ -1,175 +1,257 @@
-import { COLS, ROWS, CELL, CHUNK, AIR, COLORS, MINIMAP_RADIUS, IS_INFINITE } from './config.js';
+import {
+  CELL, COLS, ROWS, CHUNK, COLORS, AIR, MINIMAP_RADIUS,
+  IS_INFINITE,
+  GOLD, DIAMOND, CRYSTAL, RUBY, EMERALD, LAVA, GAS,
+} from './config.js';
 import { CHUNKS_X } from './chunks.js';
 
-const FOG = 0x0a0a0a;
-const EMPTY = 0x24323d;
-const RADAR_SIZE = 160; // 160x160 celdas alrededor del jugador en modo infinito
+const HIGHLIGHT_ORES = new Set([GOLD, DIAMOND, CRYSTAL, RUBY, EMERALD]);
+
+function rgbOf(hex) {
+  return [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+}
 
 export function createMinimap(world) {
-  const view = document.createElement('canvas');
-  view.id = 'minimap';
-  document.body.appendChild(view);
-  const ctx = view.getContext('2d');
+  const canvas = document.createElement('canvas');
+  canvas.id = 'minimap';
+  canvas.style.borderColor = '#7a4e2d';
+  canvas.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.65)';
+  document.body.appendChild(canvas);
 
-  // ---------- MODO INFINITO: Radar local centrado en el jugador ----------
-  if (IS_INFINITE) {
-    view.width = RADAR_SIZE;
-    view.height = RADAR_SIZE;
-    const explored = new Set(); // "x,y"
-    const img = ctx.createImageData(RADAR_SIZE, RADAR_SIZE);
+  const ctx = canvas.getContext('2d');
+  let big = false;
 
-    return {
-      toggleSize() { return view.classList.toggle('big'); },
+  const mapW = IS_INFINITE ? 220 : COLS;
+  const mapH = IS_INFINITE ? 160 : ROWS;
+  canvas.width = mapW;
+  canvas.height = mapH;
 
-      reveal(px, py) {
-        const R = MINIMAP_RADIUS;
-        for (let y = py - R; y <= py + R; y++) {
-          if (y < 0) continue;
-          for (let x = px - R; x <= px + R; x++) {
-            const dx = x - px;
-            const dy = y - py;
-            if (dx * dx + dy * dy <= R * R) explored.add(`${x},${y}`);
-          }
-        }
-      },
+  const off = document.createElement('canvas');
+  off.width = mapW;
+  off.height = mapH;
+  const offCtx = off.getContext('2d');
 
-      redrawChunk() {}, // en modo radar se dibuja directo alrededor del jugador
+  // Registro de celdas exploradas (activo tanto en Fácil como en Difícil)
+  const explored = IS_INFINITE ? new Set() : new Uint8Array(COLS * ROWS);
 
-      draw({ player, camX, camY, screenW, screenH, bases = [], goalRow }) {
-        const px = Math.floor((player.x + player.w / 2) / CELL);
-        const py = Math.floor((player.y + player.h / 2) / CELL);
-        const half = RADAR_SIZE >> 1;
-        const x0 = px - half;
-        const y0 = py - half;
+  function paintFiniteChunk(chunkIndex) {
+    if (IS_INFINITE || typeof chunkIndex !== 'number') return;
+    const cx0 = (chunkIndex % CHUNKS_X) * CHUNK;
+    const cy0 = Math.floor(chunkIndex / CHUNKS_X) * CHUNK;
+    if (cx0 < 0 || cx0 >= COLS || cy0 < 0 || cy0 >= ROWS) return;
 
-        for (let ry = 0; ry < RADAR_SIZE; ry++) {
-          const wy = y0 + ry;
-          for (let rx = 0; rx < RADAR_SIZE; rx++) {
-            const wx = x0 + rx;
-            let color = FOG;
-            if (wy < 0) {
-              color = 0x162436; // cielo nocturno
-            } else if (explored.has(`${wx},${wy}`)) {
-              const t = world.get(wx, wy);
-              color = t === AIR ? EMPTY : COLORS[t];
-            }
-            const p = (ry * RADAR_SIZE + rx) * 4;
-            img.data[p] = (color >> 16) & 255;
-            img.data[p + 1] = (color >> 8) & 255;
-            img.data[p + 2] = color & 255;
-            img.data[p + 3] = 255;
-          }
-        }
-        ctx.putImageData(img, 0, 0);
+    const img = offCtx.createImageData(CHUNK, CHUNK);
+    const data = img.data;
 
-        // Línea de hito / profundidad
-        if (goalRow >= y0 && goalRow < y0 + RADAR_SIZE) {
-          ctx.fillStyle = 'rgba(255, 224, 102, 0.75)';
-          ctx.fillRect(0, goalRow - y0, RADAR_SIZE, 1.5);
+    for (let dy = 0; dy < CHUNK; dy++) {
+      const y = cy0 + dy;
+      if (y >= ROWS) break;
+      for (let dx = 0; dx < CHUNK; dx++) {
+        const x = cx0 + dx;
+        if (x >= COLS) break;
+        const idx = (dy * CHUNK + dx) * 4;
+        const seen = explored[y * COLS + x] === 1;
+
+        if (!seen) {
+          data[idx] = 12;
+          data[idx + 1] = 9;
+          data[idx + 2] = 14;
+          data[idx + 3] = 255;
+          continue;
         }
 
-        // Tienda principal y puestos avanzados
-        for (const b of bases) {
-          const bx = b.col - x0;
-          const by = b.row - y0;
-          if (bx >= -4 && bx <= RADAR_SIZE + 4 && by >= -4 && by <= RADAR_SIZE + 4) {
-            ctx.fillStyle = b.main ? '#38b95e' : '#4fe3ff';
-            ctx.fillRect(bx - 2, by - 3, 5, 3);
-          }
+        const t = world.get(x, y);
+        if (t === AIR) {
+          const isSky = y < Math.round(ROWS * 0.14);
+          data[idx] = isSky ? 42 : 24;
+          data[idx + 1] = isSky ? 72 : 17;
+          data[idx + 2] = isSky ? 105 : 15;
+          data[idx + 3] = 255;
+        } else {
+          const [r, g, b] = rgbOf(COLORS[t] ?? 0x555555);
+          const boost = HIGHLIGHT_ORES.has(t) ? 1.25 : 1;
+          data[idx] = Math.min(255, Math.round(r * boost));
+          data[idx + 1] = Math.min(255, Math.round(g * boost));
+          data[idx + 2] = Math.min(255, Math.round(b * boost));
+          data[idx + 3] = 255;
         }
+      }
+    }
 
-        // Cámara
-        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(camX / CELL - x0, camY / CELL - y0, screenW / CELL, screenH / CELL);
-
-        // Jugador (centro)
-        ctx.fillStyle = '#ff5252';
-        ctx.fillRect(half - 1.5, half - 1.5, 3, 3);
-      },
-
-      destroy() { view.remove(); },
-    };
+    offCtx.putImageData(img, cx0, cy0);
   }
 
-  // ---------- MODO FINITO (original) ----------
-  const raw = world.raw || world;
-  const explored = new Uint8Array(COLS * ROWS);
-  const base = document.createElement('canvas');
-  base.width = COLS;
-  base.height = ROWS;
-  const bctx = base.getContext('2d');
-  const img = bctx.createImageData(COLS, ROWS);
-  let changed = true;
-
-  function paint(i) {
-    const type = raw[i];
-    const color = !explored[i] ? FOG : type === AIR ? EMPTY : COLORS[type];
-    const p = i * 4;
-    img.data[p] = (color >> 16) & 255;
-    img.data[p + 1] = (color >> 8) & 255;
-    img.data[p + 2] = color & 255;
-    img.data[p + 3] = 255;
+  // Pintado inicial cubierto por niebla de guerra
+  if (!IS_INFINITE) {
+    const totalChunks = (COLS / CHUNK) * (ROWS / CHUNK);
+    for (let i = 0; i < totalChunks; i++) paintFiniteChunk(i);
   }
-  for (let i = 0; i < COLS * ROWS; i++) paint(i);
 
-  view.width = COLS;
-  view.height = ROWS;
+  function reveal(pcx, pcy, bonusRadius = 0) {
+    const r = Math.round(MINIMAP_RADIUS + bonusRadius);
+    const r2 = r * r;
+
+    if (IS_INFINITE) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx * dx + dy * dy <= r2) {
+            explored.add(`${pcx + dx},${pcy + dy}`);
+          }
+        }
+      }
+      if (explored.size > 45000) {
+        let drop = 10000;
+        for (const k of explored) {
+          explored.delete(k);
+          if (--drop <= 0) break;
+        }
+      }
+      return;
+    }
+
+    const dirtyChunks = new Set();
+    const x0 = Math.max(0, pcx - r);
+    const x1 = Math.min(COLS - 1, pcx + r);
+    const y0 = Math.max(0, pcy - r);
+    const y1 = Math.min(ROWS - 1, pcy + r);
+
+    for (let y = y0; y <= y1; y++) {
+      const dy = y - pcy;
+      for (let x = x0; x <= x1; x++) {
+        const dx = x - pcx;
+        if (dx * dx + dy * dy > r2) continue;
+        const i = y * COLS + x;
+        if (explored[i] === 0) {
+          explored[i] = 1;
+          dirtyChunks.add(Math.floor(y / CHUNK) * CHUNKS_X + Math.floor(x / CHUNK));
+        }
+      }
+    }
+    for (const ch of dirtyChunks) paintFiniteChunk(ch);
+  }
+
+  function drawInfiniteRadar(pcx, pcy) {
+    const halfW = Math.floor(mapW / 2);
+    const halfH = Math.floor(mapH / 2);
+    const xStart = pcx - halfW;
+    const yStart = pcy - halfH;
+
+    const img = ctx.createImageData(mapW, mapH);
+    const data = img.data;
+
+    for (let py = 0; py < mapH; py++) {
+      const wy = yStart + py;
+      for (let px = 0; px < mapW; px++) {
+        const wx = xStart + px;
+        const idx = (py * mapW + px) * 4;
+
+        if (wy < 0) {
+          data[idx] = 36;
+          data[idx + 1] = 64;
+          data[idx + 2] = 96;
+          data[idx + 3] = 255;
+          continue;
+        }
+
+        const seen = explored.has(`${wx},${wy}`);
+        if (!seen) {
+          data[idx] = 12;
+          data[idx + 1] = 9;
+          data[idx + 2] = 14;
+          data[idx + 3] = 255;
+          continue;
+        }
+
+        const t = world.get(wx, wy);
+        if (t === AIR) {
+          const isSky = wy < world.surfaceAt(wx);
+          data[idx] = isSky ? 42 : 24;
+          data[idx + 1] = isSky ? 72 : 17;
+          data[idx + 2] = isSky ? 105 : 15;
+          data[idx + 3] = 255;
+        } else {
+          const [r, g, b] = rgbOf(COLORS[t] ?? 0x555555);
+          const boost = HIGHLIGHT_ORES.has(t) || t === LAVA || t === GAS ? 1.25 : 1;
+          data[idx] = Math.min(255, Math.round(r * boost));
+          data[idx + 1] = Math.min(255, Math.round(g * boost));
+          data[idx + 2] = Math.min(255, Math.round(b * boost));
+          data[idx + 3] = 255;
+        }
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+    return { originX: xStart, originY: yStart };
+  }
+
+  function draw({ player, camX, camY, screenW, screenH, bases = [], goalRow = -1 }) {
+    const pcx = Math.floor((player.x + player.w / 2) / CELL);
+    const pcy = Math.floor((player.y + player.h / 2) / CELL);
+
+    let originX = 0;
+    let originY = 0;
+
+    if (IS_INFINITE) {
+      const view = drawInfiniteRadar(pcx, pcy);
+      originX = view.originX;
+      originY = view.originY;
+    } else {
+      ctx.drawImage(off, 0, 0);
+    }
+
+    // 1. Línea de Meta (si corresponde)
+    if (goalRow >= 0) {
+      const gy = goalRow - originY;
+      if (gy >= 0 && gy < mapH) {
+        ctx.fillStyle = 'rgba(255, 224, 102, 0.75)';
+        for (let x = 0; x < mapW; x += 4) ctx.fillRect(x, gy, 2, 1);
+      }
+    }
+
+    // 2. Recuadro sutil de la cámara actual
+    const vx = camX / CELL - originX;
+    const vy = camY / CELL - originY;
+    const vw = screenW / CELL;
+    const vh = screenH / CELL;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(vx) + 0.5, Math.round(vy) + 0.5, Math.round(vw), Math.round(vh));
+
+    // 3. Bases (Tienda principal en dorado, Puestos Avanzados en celeste)
+    for (const b of bases) {
+      const bx = Math.round(b.col - originX);
+      const by = Math.round(b.row - originY - 1);
+      if (bx < -2 || bx > mapW + 2 || by < -2 || by > mapH + 2) continue;
+      ctx.fillStyle = '#140d0a';
+      ctx.fillRect(bx - 2, by - 2, 5, 5);
+      ctx.fillStyle = b.main ? '#ffcf5a' : '#4fe3ff';
+      ctx.fillRect(bx - 1, by - 1, 3, 3);
+    }
+
+    // 4. Jugador con pulso blanco/celeste
+    const px = Math.round(pcx - originX);
+    const py = Math.round(pcy - originY);
+    const pulse = (Math.sin(performance.now() * 0.008) + 1) * 0.5;
+    ctx.fillStyle = `rgba(79, 227, 255, ${0.35 + pulse * 0.45})`;
+    ctx.fillRect(px - 2, py - 2, 5, 5);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(px - 1, py - 1, 3, 3);
+  }
 
   return {
-    toggleSize() { return view.classList.toggle('big'); },
-
-    reveal(px, py) {
-      const R = MINIMAP_RADIUS;
-      for (let y = py - R; y <= py + R; y++) {
-        for (let x = px - R; x <= px + R; x++) {
-          if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
-          const dx = x - px;
-          const dy = y - py;
-          if (dx * dx + dy * dy > R * R) continue;
-          const i = y * COLS + x;
-          if (explored[i]) continue;
-          explored[i] = 1;
-          paint(i);
-          changed = true;
-        }
-      }
-    },
-
     redrawChunk(c) {
-      if (typeof c !== 'number') return;
-      const x0 = (c % CHUNKS_X) * CHUNK;
-      const y0 = Math.floor(c / CHUNKS_X) * CHUNK;
-      for (let y = y0; y < y0 + CHUNK; y++) {
-        for (let x = x0; x < x0 + CHUNK; x++) paint(y * COLS + x);
-      }
-      changed = true;
+      paintFiniteChunk(c);
     },
-
-    draw({ player, camX, camY, screenW, screenH, bases = [], goalRow }) {
-      if (changed) { bctx.putImageData(img, 0, 0); changed = false; }
-      ctx.drawImage(base, 0, 0);
-
-      if (goalRow >= 0 && goalRow < ROWS) {
-        ctx.fillStyle = 'rgba(255, 224, 102, 0.75)';
-        ctx.fillRect(0, goalRow, COLS, 1.5);
-      }
-
-      for (const b of bases) {
-        ctx.fillStyle = b.main ? '#38b95e' : '#4fe3ff';
-        ctx.fillRect(b.col - 2, b.row - 3, 5, 3);
-      }
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(camX / CELL, camY / CELL, screenW / CELL, screenH / CELL);
-
-      ctx.fillStyle = '#ff5252';
-      const px = (player.x + player.w / 2) / CELL;
-      const py = (player.y + player.h / 2) / CELL;
-      ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    reveal,
+    draw,
+    toggleSize() {
+      big = !big;
+      canvas.classList.toggle('big', big);
+      canvas.style.borderColor = big ? '#ffcf5a' : '#7a4e2d';
+      return big;
     },
-
-    destroy() { view.remove(); },
+    destroy() {
+      canvas.remove();
+    },
   };
 }

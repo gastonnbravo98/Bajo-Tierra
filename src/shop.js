@@ -1,20 +1,22 @@
 import {
   UPGRADES, DYNAMITE, OUTPOST, DIG_RADIUS, DIG_BASE_POWER, FUEL_MAX, FUEL_PER_LEVEL,
-  CARGO_BASE, CARGO_PER_LEVEL, FORTUNE_PER_LEVEL, LASER, SHAPE_ORDER,
-  ORE_VALUE, ORE_NAME, IS_INFINITE,
+  CARGO_BASE, CARGO_PER_LEVEL, FORTUNE_PER_LEVEL, LASER,
+  SHAPE_ORDER, ORE_VALUE, ORE_NAME, IS_INFINITE, IS_HARD,
 } from './config.js';
 
-// ---------- Estado del jugador que compra ----------
 export function createStats() {
   const stash = {};
   for (const t of Object.keys(ORE_VALUE)) stash[t] = 0;
   return {
     money: 0,
     dynamite: DYNAMITE.start,
-    outposts: IS_INFINITE ? OUTPOST.start : 0, // 1 kit gratis en mundo infinito
+    outposts: IS_INFINITE ? OUTPOST.start : 0,
     shape: 'circle',
     stash,
-    levels: { radius: 0, power: 0, fuel: 0, bag: 0, fortune: 0, shapes: 0, laser: 0 },
+    levels: {
+      radius: 0, power: 0, fuel: 0, bag: 0, fortune: 0, shapes: 0, laser: 0,
+      flashlight: 0, suit: 0,
+    },
   };
 }
 
@@ -61,28 +63,31 @@ export function costText(s, cost) {
 }
 
 export function shopItems(s) {
-  const items = Object.keys(UPGRADES).map((key) => {
-    const u = UPGRADES[key];
-    const lv = s.levels[key];
-    const maxed = lv >= u.max;
-    const desc = Array.isArray(u.desc) ? u.desc[lv] : u.desc;
-    return {
-      key,
-      label: u.names ? u.names[Math.min(lv, u.max - 1)] : u.name,
-      detail: maxed ? 'Nivel máximo' : `${desc} (nivel ${lv + 1} de ${u.max})`,
-      cost: maxed ? null : u.cost[lv],
-    };
-  });
+  const items = Object.keys(UPGRADES)
+    .filter((key) => !UPGRADES[key].hardOnly || IS_HARD)
+    .map((key) => {
+      const u = UPGRADES[key];
+      const lv = s.levels[key];
+      const maxed = lv >= u.max;
+      const desc = Array.isArray(u.desc) ? u.desc[lv] : u.desc;
+      return {
+        key,
+        label: u.names ? u.names[Math.min(lv, u.max - 1)] : u.name,
+        detail: maxed ? 'Nivel máximo' : `${desc} (nv. ${lv + 1}/${u.max})`,
+        cost: maxed ? null : u.cost[lv],
+      };
+    });
+
   items.push({
     key: 'dynamite',
     label: `Dinamita x${DYNAMITE.pack}`,
-    detail: `Radio ${DYNAMITE.radius}, rompe hasta roca profunda. Tenés ${s.dynamite}`,
+    detail: `Radio ${DYNAMITE.radius}, rompe roca profunda. Tenés ${s.dynamite}`,
     cost: { money: DYNAMITE.price, items: {} },
   });
   items.push({
     key: 'outpost',
     label: 'Puesto Avanzado',
-    detail: `Instala una base subterránea con tecla G (viaje rápido con T). Tenés ${s.outposts}`,
+    detail: `Base subterránea con G (viajá con T). Tenés ${s.outposts}`,
     cost: { money: OUTPOST.price, items: {} },
   });
   return items;
@@ -110,9 +115,12 @@ export function createShopPanel(el, stats, onAction, onTeleport) {
 
   function render() {
     el.replaceChildren();
-    el.append(make('h2', 'Tienda'), make('p', `Dinero: $${stats.money}`, 'shop-money'));
 
-    el.append(make('h3', 'Almacén (tocá un mineral para venderlo)'));
+    const header = make('div', undefined, 'shop-header');
+    header.append(make('h2', 'Tienda'), make('p', `Dinero: $${stats.money}`, 'shop-money'));
+    el.append(header);
+
+    el.append(make('h3', 'Almacén (clic en un mineral para venderlo)'));
     const chips = make('div', undefined, 'shop-chips');
     for (const t of Object.keys(stats.stash)) {
       if (stats.stash[t] === 0) continue;
@@ -123,19 +131,21 @@ export function createShopPanel(el, stats, onAction, onTeleport) {
     if (!chips.children.length) chips.append(make('span', 'Vacío. Cavá y volvé a la tienda.', 'shop-empty'));
     el.append(chips);
 
+    const actions = make('div', undefined, 'shop-actions');
     const all = make('button', `0. Vender todo (+$${stashValue(stats)})`, 'chip chip-all');
     all.disabled = stashCount(stats) === 0;
     all.addEventListener('click', () => sell(null));
-    el.append(all);
+    actions.append(all);
 
     if (onTeleport) {
-      const tp = make('button', 'T. Teletransportar a otra base', 'chip chip-all');
-      tp.style.marginTop = '6px';
+      const tp = make('button', 'T. Viajar a otra base', 'chip chip-all');
       tp.addEventListener('click', () => { close(); onTeleport(); });
-      el.append(tp);
+      actions.append(tp);
     }
+    el.append(actions);
 
     el.append(make('h3', 'Mejoras y equipamiento'));
+    const grid = make('div', undefined, 'shop-grid');
     shopItems(stats).forEach((item, i) => {
       const b = make('button');
       const affordable = item.cost !== null && canAfford(stats, item.cost);
@@ -145,14 +155,16 @@ export function createShopPanel(el, stats, onAction, onTeleport) {
       if (item.cost !== null && !affordable) priceEl.style.color = '#ff8585';
 
       b.append(
-        make('span', `${i + 1}. ${item.label}`),
+        make('span', `${i < 9 ? `${i + 1}. ` : ''}${item.label}`),
         priceEl,
         make('small', item.detail),
       );
       b.addEventListener('click', () => buy(i));
-      el.append(b);
+      grid.append(b);
     });
-    el.append(make('p', 'Teclas 1 a 9 compran, 0 vende todo, G instala base, T viaja. E o Esc cierran.', 'shop-hint'));
+    el.append(grid);
+
+    el.append(make('p', 'Teclas 1-9 compran, 0 vende todo, G instala base, T viaja. E o Esc cierran.', 'shop-hint'));
   }
 
   function sell(type) {

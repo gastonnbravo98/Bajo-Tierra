@@ -1,86 +1,31 @@
 import {
-  COLS, ROWS, CHUNK, AIR, SAND, HARDNESS, LOOSE, SPAN_BY_HARDNESS, IS_INFINITE,
+  COLS, ROWS, CHUNK, AIR, LAVA, GAS, LOOSE, HARDNESS, IS_INFINITE, IS_HARD,
 } from './config.js';
 import { chunkIndexOf, CHUNKS_X, CHUNKS_Y } from './chunks.js';
-import { chunkKey } from './world.js';
 
-// ---------- Delta: Map( chunkId -> Map( localIdx (0..255) -> type ) ) ----------
-function localIndex(x, y) {
-  const cx = Math.floor(x / CHUNK);
-  const cy = Math.floor(y / CHUNK);
-  return (y - cy * CHUNK) * CHUNK + (x - cx * CHUNK);
+function recordDelta(delta, x, y, type) {
+  const ch = chunkIndexOf(x, y);
+  let map = delta.get(ch);
+  if (!map) {
+    map = new Map();
+    delta.set(ch, map);
+  }
+  map.set(`${x},${y}`, type);
 }
 
-function recordDelta(delta, chunkId, x, y, type) {
-  let m = delta.get(chunkId);
-  if (!m) { m = new Map(); delta.set(chunkId, m); }
-  m.set(localIndex(x, y), type);
+function setCell(world, delta, chunks, x, y, type) {
+  world.set(x, y, type);
+  recordDelta(delta, x, y, type);
+  chunks.markDirty(chunkIndexOf(x, y));
 }
 
 export function applyDelta(world, delta) {
-  for (const [chunkId, m] of delta) {
-    let chx, chy;
-    if (typeof chunkId === 'string') {
-      [chx, chy] = chunkId.split(',').map(Number);
-    } else {
-      chx = chunkId % CHUNKS_X;
-      chy = Math.floor(chunkId / CHUNKS_X);
-    }
-    const x0 = chx * CHUNK;
-    const y0 = chy * CHUNK;
-    for (const [loc, type] of m) {
-      const lx = loc % CHUNK;
-      const ly = (loc - lx) / CHUNK;
-      world.set(x0 + lx, y0 + ly, type);
+  for (const map of delta.values()) {
+    for (const [key, type] of map) {
+      const [x, y] = key.split(',').map(Number);
+      world.set(x, y, type);
     }
   }
-}
-
-// ---------- Formas del golpe (devuelve pares [x, y]) ----------
-const COS_CONE = Math.cos((30 * Math.PI) / 180);
-
-export function shapeCells(shape, cx, cy, radius, px, py) {
-  const cells = [];
-  const add = (x, y) => {
-    if (y < 0) return;
-    if (!IS_INFINITE && (x < 0 || x >= COLS || y >= ROWS)) return;
-    cells.push([x, y]);
-  };
-
-  if (shape === 'cross') {
-    const arm = Math.ceil(radius * 2);
-    for (let k = -arm; k <= arm; k++) { add(cx + k, cy); if (k !== 0) add(cx, cy + k); }
-  } else if (shape === 'drill') {
-    const len = Math.ceil(radius * 4);
-    for (let k = 0; k < len; k++) add(cx, cy + k);
-  } else if (shape === 'cone') {
-    const dx = cx - px;
-    const dy = cy - py;
-    const d = Math.hypot(dx, dy) || 1;
-    const ux = dx / d;
-    const uy = dy / d;
-    const len = 2 + radius * 2;
-    const r = Math.ceil(len);
-    for (let y = py - r; y <= py + r; y++) {
-      for (let x = px - r; x <= px + r; x++) {
-        const vx = x - px;
-        const vy = y - py;
-        const dist = Math.hypot(vx, vy);
-        if (dist < 0.9 || dist > len) continue;
-        if ((vx * ux + vy * uy) / dist >= COS_CONE) add(x, y);
-      }
-    }
-  } else {
-    const r = Math.ceil(radius);
-    for (let y = cy - r; y <= cy + r; y++) {
-      for (let x = cx - r; x <= cx + r; x++) {
-        const dx = x - cx;
-        const dy = y - cy;
-        if (dx * dx + dy * dy <= radius * radius) add(x, y);
-      }
-    }
-  }
-  return cells;
 }
 
 export function cellsBounds(cells) {
@@ -88,266 +33,354 @@ export function cellsBounds(cells) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [x, y] of cells) {
     if (x < x0) x0 = x;
-    if (x > x1) x1 = x;
     if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
     if (y > y1) y1 = y;
   }
   return { x0, y0, x1, y1 };
 }
 
-function breakCell(world, delta, chunks, x, y, broken, onBreak) {
-  const type = world.get(x, y);
-  broken[type] = (broken[type] || 0) + 1;
-  world.set(x, y, AIR);
-  const c = chunkIndexOf(x, y);
-  recordDelta(delta, c, x, y, AIR);
-  chunks.markDirty(c);
-  if (onBreak) onBreak(x, y, type);
+export function shapeCells(shape, cx, cy, radius, px = cx, py = cy) {
+  const out = [];
+  const r = Math.ceil(radius);
+
+  if (shape === 'cross') {
+    for (let d = -r; d <= r; d++) {
+      out.push([cx + d, cy]);
+      if (d !== 0) out.push([cx, cy + d]);
+    }
+    return out;
+  }
+
+  if (shape === 'drill') {
+    const depth = Math.max(3, Math.round(radius * 2.2));
+    for (let dy = -1; dy <= depth; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        out.push([cx + dx, cy + dy]);
+      }
+    }
+    return out;
+  }
+
+  if (shape === 'cone') {
+    const dx0 = cx - px;
+    const dy0 = cy - py;
+    const len = Math.hypot(dx0, dy0);
+    if (len < 0.01) return [[cx, cy]];
+    const dirX = dx0 / len;
+    const dirY = dy0 / len;
+    const reach = Math.max(4, Math.round(radius * 3));
+    const maxCos = Math.cos(0.45);
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        const d = Math.hypot(dx, dy);
+        if (d === 0 || d > reach) continue;
+        const dot = (dx * dirX + dy * dirY) / d;
+        if (dot >= maxCos) out.push([px + dx, py + dy]);
+      }
+    }
+    return out;
+  }
+
+  // Por defecto: 'circle'
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      if (Math.hypot(dx, dy) <= radius) out.push([cx + dx, cy + dy]);
+    }
+  }
+  return out;
 }
 
 export function digCells(world, delta, chunks, cells, power, onBreak) {
-  const broken = {};
   let count = 0;
   let blocked = 0;
+  const broken = {};
+
   for (const [x, y] of cells) {
+    if (!world.inBounds(x, y)) continue;
     const type = world.get(x, y);
-    if (type === AIR) continue;
-    if (HARDNESS[type] > power) { blocked++; continue; }
-    breakCell(world, delta, chunks, x, y, broken, onBreak);
+    if (type === AIR || type === LAVA || type === GAS) continue;
+
+    const hard = HARDNESS[type] ?? 0;
+    if (hard > power) {
+      blocked++;
+      continue;
+    }
+
+    setCell(world, delta, chunks, x, y, AIR);
     count++;
+    broken[type] = (broken[type] || 0) + 1;
+    onBreak?.(x, y, type);
   }
-  return { broken, count, blocked };
-}
 
-export function dig(world, delta, chunks, cx, cy, radius, power, onBreak) {
-  return digCells(world, delta, chunks, shapeCells('circle', cx, cy, radius), power, onBreak);
-}
-
-// ---------- Láser: raycasting DDA ----------
-export function rayCells(ox, oy, dx, dy, maxDist) {
-  const cells = [];
-  let cx = Math.floor(ox);
-  let cy = Math.floor(oy);
-  const stepX = dx > 0 ? 1 : -1;
-  const stepY = dy > 0 ? 1 : -1;
-  const tDeltaX = dx === 0 ? Infinity : Math.abs(1 / dx);
-  const tDeltaY = dy === 0 ? Infinity : Math.abs(1 / dy);
-  let tMaxX = dx === 0 ? Infinity : (dx > 0 ? cx + 1 - ox : ox - cx) * tDeltaX;
-  let tMaxY = dy === 0 ? Infinity : (dy > 0 ? cy + 1 - oy : oy - cy) * tDeltaY;
-
-  while (cy >= 0 && (IS_INFINITE || (cx >= 0 && cx < COLS && cy < ROWS))) {
-    cells.push([cx, cy]);
-    const t = Math.min(tMaxX, tMaxY);
-    if (t > maxDist) break;
-    if (tMaxX < tMaxY) { cx += stepX; tMaxX += tDeltaX; }
-    else { cy += stepY; tMaxY += tDeltaY; }
-  }
-  return cells;
+  return { count, blocked, broken };
 }
 
 export function laser(world, delta, chunks, ox, oy, dx, dy, pierce, range, power, onBreak) {
-  const path = rayCells(ox, oy, dx, dy, range);
+  let count = 0;
+  let blocked = 0;
   const broken = {};
   const hitCells = [];
-  let blocked = 0;
-  let last = path.length ? path[path.length - 1] : [Math.floor(ox), Math.floor(oy)];
-  for (const [x, y] of path) {
-    const type = world.get(x, y);
-    if (type === AIR) continue;
-    if (HARDNESS[type] > power) { blocked++; last = [x, y]; break; }
-    breakCell(world, delta, chunks, x, y, broken, onBreak);
-    hitCells.push([x, y]);
-    last = [x, y];
-    if (hitCells.length >= pierce) break;
+  const seen = new Set();
+  let last = [Math.floor(ox), Math.floor(oy)];
+
+  const steps = Math.ceil(range * 2);
+  for (let i = 1; i <= steps; i++) {
+    const t = i * 0.5;
+    const cx = Math.floor(ox + dx * t);
+    const cy = Math.floor(oy + dy * t);
+    const key = `${cx},${cy}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (!world.inBounds(cx, cy)) break;
+    last = [cx, cy];
+    hitCells.push(last);
+
+    const type = world.get(cx, cy);
+    if (type === AIR || type === LAVA || type === GAS) continue;
+
+    const hard = HARDNESS[type] ?? 0;
+    if (hard > power) {
+      blocked++;
+      break;
+    }
+
+    setCell(world, delta, chunks, cx, cy, AIR);
+    count++;
+    broken[type] = (broken[type] || 0) + 1;
+    onBreak?.(cx, cy, type);
+    if (count >= pierce) break;
   }
-  return { broken, count: hitCells.length, blocked, hitCells, last };
+
+  return { count, blocked, broken, last, hitCells };
 }
 
-// ---------- Simulación del terreno (autómata celular) ----------
-const LOOSE_SET = new Set(LOOSE);
-const MAX_RUN = 40;
-const GAP = 0;
-const ANCHOR = 1;
-const HANG = 2;
+export function igniteGas(world, delta, chunks, cells, onBreak) {
+  const queue = [];
+  const gasSet = new Set();
 
-export function createSim(world, delta, chunks) {
-  let pending = new Set(); // Set de chunkId (número en finito, "cx,cy" en infinito)
-  let tick = 0;
-  let moved = [];          // pares [x, y] movidos en el último paso
-  let lastActive = [];
-  const stats = { steps: 0, activeChunks: 0, examined: 0, moved: 0, ms: 0, totalMoved: 0 };
-
-  let occupied = null;
-  let blockedFlag = false;
-
-  const cellKey = (x, y) => `${x},${y}`;
-
-  function touch(x, y) {
-    const cx = Math.floor(x / CHUNK);
-    const cy = Math.floor(y / CHUNK);
+  for (const [x, y] of cells) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (ny < 0) continue;
-        if (!IS_INFINITE && (nx < 0 || nx >= CHUNKS_X || ny >= CHUNKS_Y)) continue;
-        pending.add(IS_INFINITE ? chunkKey(nx, ny) : ny * CHUNKS_X + nx);
-      }
-    }
-  }
-
-  function setCell(x, y, type) {
-    world.set(x, y, type);
-    const c = chunkIndexOf(x, y);
-    recordDelta(delta, c, x, y, type);
-    chunks.markDirty(c);
-  }
-
-  function move(x0, y0, x1, y1) {
-    setCell(x1, y1, world.get(x0, y0));
-    setCell(x0, y0, AIR);
-    moved.push([x1, y1]);
-    touch(x0, y0);
-    touch(x1, y1);
-  }
-
-  function canEnter(x, y) {
-    if (y < 0) return false;
-    if (!IS_INFINITE && (x < 0 || x >= COLS || y >= ROWS)) return false;
-    if (world.get(x, y) !== AIR) return false;
-    if (occupied && occupied.has(cellKey(x, y))) { blockedFlag = true; return false; }
-    return true;
-  }
-
-  function kind(x, y) {
-    if (!IS_INFINITE && (x < 0 || x >= COLS)) return ANCHOR;
-    if (y < 0) return GAP;
-    if (!IS_INFINITE && y >= ROWS) return ANCHOR;
-    const t = world.get(x, y);
-    if (t === AIR) return GAP;
-    const loose = LOOSE_SET.has(t);
-    if (!loose && SPAN_BY_HARDNESS[HARDNESS[t]] === undefined) return ANCHOR;
-    if ((!IS_INFINITE && y + 1 >= ROWS) || world.get(x, y + 1) !== AIR) return ANCHOR;
-    return loose ? GAP : HANG;
-  }
-
-  function holds(a, b, y) {
-    let span = Infinity;
-    for (let x = a; x <= b; x++) {
-      span = Math.min(span, SPAN_BY_HARDNESS[HARDNESS[world.get(x, y)]]);
-    }
-    const L = b - a + 1;
-    const left = kind(a - 1, y) === ANCHOR;
-    const right = kind(b + 1, y) === ANCHOR;
-    if (left && right) return L <= span;
-    if (left || right) return L <= Math.max(1, Math.floor(span / 2));
-    return false;
-  }
-
-  // activeBounds (opcional): { cx0, cx1, cy0, cy1 } ventana alrededor de la cámara
-  function step(occ, activeBounds) {
-    const t0 = performance.now();
-    occupied = occ || null;
-    tick++;
-
-    const parseChunk = (id) => {
-      if (typeof id === 'string') {
-        const [cx, cy] = id.split(',').map(Number);
-        return { id, cx, cy };
-      }
-      return { id, cx: id % CHUNKS_X, cy: Math.floor(id / CHUNKS_X) };
-    };
-
-    const all = [...pending].map(parseChunk);
-    const toProcess = [];
-    const deferred = new Set();
-
-    for (const item of all) {
-      if (activeBounds && (
-        item.cx < activeBounds.cx0 || item.cx > activeBounds.cx1 ||
-        item.cy < activeBounds.cy0 || item.cy > activeBounds.cy1
-      )) {
-        deferred.add(item.id); // fuera de la ventana 3x3: queda pendiente para cuando vuelvas
-      } else {
-        toProcess.push(item);
-      }
-    }
-
-    // Ordenar de abajo hacia arriba (cy descendente)
-    toProcess.sort((a, b) => b.cy - a.cy);
-    pending = deferred;
-    moved = [];
-    let examined = 0;
-
-    for (const { id, cx, cy } of toProcess) {
-      blockedFlag = false;
-      const x0 = cx * CHUNK;
-      const y0 = cy * CHUNK;
-      const xEnd = x0 + CHUNK - 1;
-
-      for (let y = y0 + CHUNK - 1; y >= y0; y--) {
-        const ltr = ((tick + y) & 1) === 0;
-        for (let k = 0; k < CHUNK; k++) {
-          const x = ltr ? x0 + k : xEnd - k;
-          const t = world.get(x, y);
-          if (!LOOSE_SET.has(t)) continue;
-          examined++;
-          if (canEnter(x, y + 1)) { move(x, y, x, y + 1); continue; }
-          if (t === SAND) {
-            const d = ((x + tick) & 1) ? 1 : -1;
-            if (canEnter(x + d, y + 1)) move(x, y, x + d, y + 1);
-            else if (canEnter(x - d, y + 1)) move(x, y, x - d, y + 1);
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!world.inBounds(nx, ny)) continue;
+        if (world.get(nx, ny) === GAS) {
+          const k = `${nx},${ny}`;
+          if (!gasSet.has(k)) {
+            gasSet.add(k);
+            queue.push([nx, ny]);
           }
         }
+      }
+    }
+  }
 
-        let x = x0;
-        while (x <= xEnd) {
-          if (kind(x, y) !== HANG) { x++; continue; }
-          let a = x;
-          while ((IS_INFINITE || a > 0) && x - a < MAX_RUN && kind(a - 1, y) === HANG) a--;
-          let b = x;
-          while ((IS_INFINITE || b < COLS - 1) && b - a < MAX_RUN && kind(b + 1, y) === HANG) b++;
-          const end = Math.min(b, xEnd);
-          examined += end - x + 1;
-          if (!holds(a, b, y)) {
-            for (let xx = x; xx <= end; xx++) {
-              if (canEnter(xx, y + 1)) move(xx, y, xx, y + 1);
+  if (!queue.length) return [];
+
+  const blown = [];
+  while (queue.length && blown.length < 180) {
+    const [gx, gy] = queue.shift();
+    blown.push([gx, gy]);
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const nx = gx + dx;
+        const ny = gy + dy;
+        if (!world.inBounds(nx, ny)) continue;
+        const t = world.get(nx, ny);
+        if (t === GAS) {
+          const k = `${nx},${ny}`;
+          if (!gasSet.has(k)) {
+            gasSet.add(k);
+            queue.push([nx, ny]);
+          }
+        } else if (t !== AIR && t !== LAVA && (HARDNESS[t] ?? 99) <= 3 && Math.hypot(dx, dy) <= 1.8) {
+          setCell(world, delta, chunks, nx, ny, AIR);
+          onBreak?.(nx, ny, t);
+        }
+      }
+    }
+    setCell(world, delta, chunks, gx, gy, AIR);
+  }
+
+  return blown;
+}
+
+const LOOSE_SET = new Set(LOOSE);
+
+export function createSim(world, delta, chunks) {
+  const pending = new Set();
+  const moved = [];
+  let lastActive = [];
+  const stats = {
+    steps: 0,
+    activeChunks: 0,
+    examined: 0,
+    moved: 0,
+    ms: 0,
+    totalMoved: 0,
+  };
+
+  function wakeChunk(ch) {
+    if (!IS_INFINITE && (ch < 0 || ch >= CHUNKS_X * CHUNKS_Y)) return;
+    pending.add(ch);
+  }
+
+  function wakeRect(x0, y0, x1, y1) {
+    const cx0 = Math.floor(x0 / CHUNK);
+    const cx1 = Math.floor(x1 / CHUNK);
+    const cy0 = Math.max(0, Math.floor(y0 / CHUNK));
+    const cy1 = Math.floor(y1 / CHUNK);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        if (!IS_INFINITE && (cx < 0 || cx >= CHUNKS_X || cy >= CHUNKS_Y)) continue;
+        wakeChunk(IS_INFINITE ? `${cx},${cy}` : cy * CHUNKS_X + cx);
+      }
+    }
+  }
+
+  function step(occupiedCells, activeBounds) {
+    const t0 = performance.now();
+    moved.length = 0;
+    lastActive = [];
+    let examined = 0;
+    let movedCount = 0;
+    let crushed = 0;
+    const processed = new Set();
+
+    const toProcess = [];
+    for (const ch of pending) {
+      let cx, cy;
+      if (typeof ch === 'string') [cx, cy] = ch.split(',').map(Number);
+      else { cx = ch % CHUNKS_X; cy = Math.floor(ch / CHUNKS_X); }
+      if (
+        cx >= activeBounds.cx0 && cx <= activeBounds.cx1 &&
+        cy >= activeBounds.cy0 && cy <= activeBounds.cy1
+      ) {
+        toProcess.push([ch, cx, cy]);
+      }
+    }
+
+    // Procesar de abajo hacia arriba para caída natural
+    toProcess.sort((a, b) => b[2] - a[2]);
+
+    for (const [ch, cx, cy] of toProcess) {
+      pending.delete(ch);
+      lastActive.push(ch);
+      let chunkChanged = false;
+
+      const xStart = cx * CHUNK;
+      const yStart = cy * CHUNK;
+
+      for (let y = yStart + CHUNK - 1; y >= yStart; y--) {
+        const leftToRight = ((y + stats.steps) & 1) === 0;
+        for (let i = 0; i < CHUNK; i++) {
+          const x = xStart + (leftToRight ? i : CHUNK - 1 - i);
+          if (!world.inBounds(x, y)) continue;
+          const k = `${x},${y}`;
+          if (processed.has(k)) continue;
+          examined++;
+
+          const type = world.get(x, y);
+          if (type === AIR) continue;
+
+          // Arena y grava caen
+          if (LOOSE_SET.has(type)) {
+            const below = world.inBounds(x, y + 1) ? world.get(x, y + 1) : 99;
+            if (below === AIR || below === GAS || below === LAVA) {
+              setCell(world, delta, chunks, x, y, below === LAVA ? LAVA : AIR);
+              setCell(world, delta, chunks, x, y + 1, type);
+              processed.add(`${x},${y + 1}`);
+              moved.push([x, y + 1]);
+              movedCount++;
+              chunkChanged = true;
+              if (occupiedCells.has(`${x},${y + 1}`)) crushed++;
+              wakeRect(x - 1, y - 1, x + 1, y + 2);
+              continue;
+            }
+            const dir = Math.random() < 0.5 ? -1 : 1;
+            for (const d of [dir, -dir]) {
+              const diag = world.inBounds(x + d, y + 1) ? world.get(x + d, y + 1) : 99;
+              if (diag === AIR || diag === GAS) {
+                setCell(world, delta, chunks, x, y, AIR);
+                setCell(world, delta, chunks, x + d, y + 1, type);
+                processed.add(`${x + d},${y + 1}`);
+                moved.push([x + d, y + 1]);
+                movedCount++;
+                chunkChanged = true;
+                if (occupiedCells.has(`${x + d},${y + 1}`)) crushed++;
+                wakeRect(x - 1, y - 1, x + 1, y + 2);
+                break;
+              }
             }
           }
-          x = end + 1;
+
+          // Lava fluye hacia abajo y los costados (Modo Difícil)
+          if (IS_HARD && type === LAVA) {
+            const below = world.inBounds(x, y + 1) ? world.get(x, y + 1) : 99;
+            if (below === AIR || below === GAS) {
+              setCell(world, delta, chunks, x, y, AIR);
+              setCell(world, delta, chunks, x, y + 1, LAVA);
+              processed.add(`${x},${y + 1}`);
+              moved.push([x, y + 1]);
+              movedCount++;
+              chunkChanged = true;
+              wakeRect(x - 1, y - 1, x + 1, y + 2);
+              continue;
+            }
+            const dir = Math.random() < 0.5 ? -1 : 1;
+            for (const d of [dir, -dir]) {
+              const side = world.inBounds(x + d, y) ? world.get(x + d, y) : 99;
+              if (side === AIR || side === GAS) {
+                setCell(world, delta, chunks, x, y, AIR);
+                setCell(world, delta, chunks, x + d, y, LAVA);
+                processed.add(`${x + d},${y}`);
+                moved.push([x + d, y]);
+                movedCount++;
+                chunkChanged = true;
+                wakeRect(x - 1, y - 1, x + 1, y + 1);
+                break;
+              }
+            }
+          }
+
+          // Gas sube hacia el techo (Modo Difícil)
+          if (IS_HARD && type === GAS) {
+            const above = world.inBounds(x, y - 1) ? world.get(x, y - 1) : 99;
+            if (above === AIR) {
+              setCell(world, delta, chunks, x, y, AIR);
+              setCell(world, delta, chunks, x, y - 1, GAS);
+              processed.add(`${x},${y - 1}`);
+              moved.push([x, y - 1]);
+              movedCount++;
+              chunkChanged = true;
+              wakeRect(x - 1, y - 2, x + 1, y + 1);
+            }
+          }
         }
       }
 
-      if (blockedFlag) pending.add(id);
+      if (chunkChanged) wakeChunk(ch);
     }
 
-    lastActive = toProcess.map((p) => p.id);
     stats.steps++;
     stats.activeChunks = toProcess.length;
     stats.examined = examined;
-    stats.moved = moved.length;
-    stats.totalMoved += moved.length;
+    stats.moved = movedCount;
+    stats.totalMoved += movedCount;
     stats.ms = performance.now() - t0;
+
+    return crushed;
   }
 
   return {
-    stats,
-    step,
-    get moved() { return moved; },
-    get lastActive() { return lastActive; },
     get pendingCount() { return pending.size; },
-
-    wakeRect(x0, y0, x1, y1) {
-      const cx0 = Math.floor(x0 / CHUNK) - 1;
-      const cx1 = Math.floor(x1 / CHUNK) + 1;
-      const cy0 = Math.max(0, Math.floor(y0 / CHUNK) - 1);
-      const cy1 = Math.floor(y1 / CHUNK) + 1;
-      for (let cy = cy0; cy <= cy1; cy++) {
-        for (let cx = cx0; cx <= cx1; cx++) {
-          if (!IS_INFINITE && (cx < 0 || cx >= CHUNKS_X || cy >= CHUNKS_Y)) continue;
-          pending.add(IS_INFINITE ? chunkKey(cx, cy) : cy * CHUNKS_X + cx);
-        }
-      }
-    },
+    get lastActive() { return lastActive; },
+    moved,
+    stats,
+    wakeRect,
+    step,
   };
 }

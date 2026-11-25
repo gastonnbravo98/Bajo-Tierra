@@ -1,8 +1,7 @@
-import { COLS, ROWS, CHUNK, AIR, IS_INFINITE } from './config.js';
+import { COLS, ROWS, AIR, FLUIDS, IS_INFINITE } from './config.js';
 
 export const chunkKey = (cx, cy) => `${cx},${cy}`;
 
-// Crea un envoltorio rápido sobre un array finito para usar la misma API get/set
 export function wrapFiniteWorld(arr) {
   return {
     infinite: false,
@@ -22,15 +21,14 @@ export function wrapFiniteWorld(arr) {
   };
 }
 
-// ¿La celda (cx, cy) es sólida?
-// En mundo infinito no hay paredes laterales ni piso de bedrock: el espacio es abierto.
+// ¿La celda (cx, cy) es sólida? (Aire, Gas y Lava no frenan el movimiento físico)
 export function isSolid(world, cx, cy) {
   if (IS_INFINITE) {
     if (cy < 0) return false;
-    return world.get(cx, cy) !== AIR;
+    return !FLUIDS.has(world.get(cx, cy));
   }
   if (cx < 0 || cx >= COLS || cy >= ROWS) return true;
   if (cy < 0) return false;
   const raw = world.raw || world;
-  return raw[cy * COLS + cx] !== AIR;
+  return !FLUIDS.has(raw[cy * COLS + cx]);
 }

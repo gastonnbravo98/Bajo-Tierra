@@ -1,19 +1,17 @@
 import {
-  COLS, ROWS, STONE, GRANITE, DEEPROCK, MAGMA_ROCK, ORES, ORE_BOOST,
+  COLS, ROWS, STONE, GRANITE, DEEPROCK, MAGMA_ROCK, ORES, ORE_BOOST, IS_HARD,
 } from './config.js';
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const canReplace = (t) => t === STONE || t === GRANITE || t === DEEPROCK || t === MAGMA_ROCK;
 
-// Reemplaza algunas celdas de roca por mineral, arena o grava, en pequeñas venas o bolsas.
-// Respeta el rango de profundidad de cada mineral y la chance según el bioma.
-// Usa el generador que le pasan, así que la misma seed da siempre lo mismo.
 export function placeOres(world, rand, biomes) {
   for (const ore of ORES) {
+    if (ore.hardOnly && !IS_HARD) continue;
+
     const startY = Math.floor(ROWS * ore.minDepth);
     const endY = Math.min(ROWS, Math.floor(ROWS * ore.maxDepth));
 
-    // pinta una celda solo si es roca y está dentro del rango de profundidad
     const put = (x, y) => {
       if (x < 0 || x >= COLS || y < startY || y >= endY) return;
       if (canReplace(world[y * COLS + x])) world[y * COLS + x] = ore.type;
@@ -26,7 +24,6 @@ export function placeOres(world, rand, biomes) {
         const chance = ore.chance * ORE_BOOST * (ore.biome?.[biomes[i]] ?? 1);
         if (rand() >= chance) continue;
 
-        // vena: caminata al azar que convierte la roca en mineral
         let cx = x;
         let cy = y;
         for (let k = 0; k < ore.size; k++) {

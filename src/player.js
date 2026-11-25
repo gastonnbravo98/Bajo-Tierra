@@ -2,12 +2,12 @@ import {
   CELL, COLS, ROWS, PLAYER_W, PLAYER_H,
   MOVE_SPEED, GRAVITY, JUMP_SPEED, MAX_FALL,
   FUEL_MAX, FUEL_USE, FUEL_REGEN, THRUST, FLY_SPEED,
+  HP_MAX, FALL_SAFE_SPEED, FALL_DMG_MULT, IS_HARD,
 } from './config.js';
 import { isSolid } from './world.js';
 
-const MAX_STEP = CELL / 2; // nunca mover más de media celda por paso
+const MAX_STEP = CELL / 2;
 
-// Crea al jugador parado sobre la superficie de la columna del medio
 export function createPlayer(world) {
   const w = PLAYER_W * CELL;
   const h = PLAYER_H * CELL;
@@ -21,12 +21,15 @@ export function createPlayer(world) {
     vx: 0, vy: 0,
     onGround: false,
     fuel: FUEL_MAX,
-    fuelMax: FUEL_MAX, // las mejoras del tanque lo agrandan
+    fuelMax: FUEL_MAX,
+    hp: HP_MAX,
+    maxHp: HP_MAX,
+    invuln: 0,
+    lastFallDamage: 0,
     flying: false,
   };
 }
 
-// ¿La caja (x, y, w, h) toca alguna celda llena?
 function collides(world, x, y, w, h) {
   const x0 = Math.floor(x / CELL);
   const x1 = Math.floor((x + w - 0.001) / CELL);
@@ -63,10 +66,19 @@ function moveY(world, p, dy) {
     p.y += step;
     if (collides(world, p.x, p.y, p.w, p.h)) {
       if (step > 0) {
-        p.y = Math.floor((p.y + p.h) / CELL) * CELL - p.h; // aterrizó
+        p.y = Math.floor((p.y + p.h) / CELL) * CELL - p.h;
         p.onGround = true;
+
+        // Daño de caída solo en Modo Difícil
+        if (IS_HARD) {
+          const fallCellsPerSec = p.vy / CELL;
+          if (fallCellsPerSec > FALL_SAFE_SPEED) {
+            const dmg = Math.round((fallCellsPerSec - FALL_SAFE_SPEED) * FALL_DMG_MULT);
+            if (dmg > 0) p.lastFallDamage = dmg;
+          }
+        }
       } else {
-        p.y = (Math.floor(p.y / CELL) + 1) * CELL;          // se pegó la cabeza
+        p.y = (Math.floor(p.y / CELL) + 1) * CELL;
       }
       p.vy = 0;
       return;
@@ -75,20 +87,20 @@ function moveY(world, p, dy) {
 }
 
 export function updatePlayer(world, p, input, dt) {
-  // horizontal
+  p.lastFallDamage = 0;
+  if (!IS_HARD) p.hp = p.maxHp;
+  if (p.invuln > 0) p.invuln = Math.max(0, p.invuln - dt);
+
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   p.vx = dir * MOVE_SPEED * CELL;
 
-  // salto: solo si estaba apoyado en el frame anterior
   if (input.jump && p.onGround) {
     p.vy = -JUMP_SPEED * CELL;
     p.onGround = false;
   }
 
-  // gravedad, con límite de velocidad de caída
   p.vy = Math.min(p.vy + GRAVITY * CELL * dt, MAX_FALL * CELL);
 
-  // jetpack: manteniendo salto en el aire, con combustible, y sin pasar la velocidad máxima de subida
   p.flying = false;
   if (input.jump && !p.onGround && p.fuel > 0 && p.vy > -FLY_SPEED * CELL) {
     p.vy = Math.max(p.vy - THRUST * CELL * dt, -FLY_SPEED * CELL);
@@ -97,9 +109,8 @@ export function updatePlayer(world, p, input, dt) {
   }
 
   moveX(world, p, p.vx * dt);
-  p.onGround = false; // se vuelve a poner en true si moveY detecta piso
+  p.onGround = false;
   moveY(world, p, p.vy * dt);
 
-  // en el suelo el combustible se recarga solo
   if (p.onGround) p.fuel = Math.min(p.fuelMax, p.fuel + FUEL_REGEN * dt);
 }

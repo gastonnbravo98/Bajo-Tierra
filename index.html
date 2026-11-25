@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Bajo Tierra</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏️</text></svg>">
   <style>
     :root {
       --panel: rgba(34, 21, 14, 0.9);
@@ -65,17 +66,13 @@
     .menu-header {
       position: relative; z-index: 1; text-align: center; margin-bottom: 18px;
     }
-    .menu-badge {
-      display: inline-block; padding: 4px 12px; margin-bottom: 8px;
-      font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
-      color: #4fe3ff; background: rgba(15, 25, 38, 0.8);
-      border: 1px solid rgba(79, 227, 255, 0.4); border-radius: 999px;
-    }
     #menu h1 {
       margin: 0; font-size: clamp(44px, 7vw, 68px); font-weight: 900;
       letter-spacing: 3px; text-transform: uppercase;
       background: linear-gradient(180deg, #fff3b0 0%, #ffcf5a 48%, #d97724 100%);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
       filter: drop-shadow(0 5px 0 #241309) drop-shadow(0 10px 20px rgba(0, 0, 0, 0.75));
     }
     .menu-subtitle {
@@ -225,7 +222,7 @@
     #hud .hud-msg { color: var(--gold); font-weight: bold; margin-top: 2px; }
     #hud .hud-warn { color: #ff6b6b; font-weight: bold; margin-top: 2px; }
 
-    /* Indicador visual de combustible */
+    /* Indicadores visuales de vida y combustible */
     #hud .fuel-row {
       display: flex; align-items: center; gap: 6px; margin: 3px 0;
     }
@@ -239,6 +236,13 @@
     }
     #hud .fuel-fill.low {
       background: linear-gradient(90deg, #b82929, #ff6b35);
+    }
+    #hud .hp-fill {
+      height: 100%; background: linear-gradient(90deg, #b82929, #ff5252);
+      transition: width 0.08s linear;
+    }
+    #hud .hp-fill.low {
+      background: linear-gradient(90deg, #7a1212, #ff2b2b);
     }
     #hud .fuel-track.empty {
       border-color: #ff5252;
@@ -274,29 +278,39 @@
       font: 600 22px sans-serif; text-align: center;
     }
 
-    /* Tienda */
+    /* ---------- Tienda compacta en 2 columnas ---------- */
     #shop {
-      display: none; position: fixed; right: 12px; bottom: 12px; z-index: 7; width: 380px;
-      max-height: calc(100vh - 24px); overflow-y: auto;
-      padding: 14px; background: var(--panel); color: var(--text);
+      display: none; position: fixed; right: 12px; bottom: 12px; z-index: 7;
+      width: min(560px, calc(100vw - 24px));
+      padding: 10px 12px; background: var(--panel); color: var(--text);
       border: 1px solid var(--panel-border); border-radius: 6px; font-family: sans-serif;
     }
-    #shop h2 { margin: 0 0 4px; font-size: 22px; }
-    #shop h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
-    #shop .shop-money { margin: 0 0 6px; color: var(--gold); font-weight: 600; }
-    #shop .shop-hint { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
-    #shop .shop-empty { color: var(--muted); font-size: 13px; }
-    #shop .shop-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-    #shop button {
-      display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; width: 100%;
-      margin-bottom: 6px; padding: 8px 10px; text-align: left; cursor: pointer;
-      background: #4a2f1c; color: var(--text); border: 1px solid var(--panel-border); border-radius: 4px;
-      font: 15px sans-serif;
+    #shop .shop-header {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 4px;
     }
-    #shop button.chip { display: inline-block; width: auto; margin: 0; padding: 4px 8px; font-size: 13px; }
-    #shop button.chip-all { display: block; width: 100%; margin-top: 4px; text-align: center; }
-    #shop button small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
-    #shop button strong { color: var(--gold); }
+    #shop h2 { margin: 0; font-size: 18px; }
+    #shop h3 { margin: 8px 0 4px; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+    #shop .shop-money { margin: 0; color: var(--gold); font-weight: 700; font-size: 15px; }
+    #shop .shop-hint { margin: 6px 0 0; color: var(--muted); font-size: 11px; text-align: center; }
+    #shop .shop-empty { color: var(--muted); font-size: 12px; }
+    #shop .shop-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+    #shop .shop-actions { display: flex; gap: 6px; margin-bottom: 4px; }
+    #shop .shop-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+    }
+    #shop button {
+      display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; width: 100%;
+      margin: 0; padding: 5px 8px; text-align: left; cursor: pointer;
+      background: #4a2f1c; color: var(--text); border: 1px solid var(--panel-border); border-radius: 4px;
+      font: 13px sans-serif;
+    }
+    #shop button.chip { display: inline-block; width: auto; padding: 3px 7px; font-size: 12px; }
+    #shop button.chip-all { display: block; flex: 1; padding: 5px 8px; font-size: 12px; text-align: center; }
+    #shop button small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; line-height: 1.2; }
+    #shop button strong { color: var(--gold); font-size: 12px; }
     #shop button:hover:not(:disabled) { background: #6a4326; }
     #shop button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     #shop button:disabled { opacity: 0.45; cursor: default; }
@@ -335,6 +349,14 @@
           <option value="medium" selected>Mediano (320 × 224)</option>
           <option value="large">Grande (480 × 320)</option>
           <option value="infinite">Infinito (sin límites)</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label for="difficulty-select">Dificultad</label>
+        <select id="difficulty-select" aria-label="Dificultad">
+          <option value="normal" selected>Fácil (Sin daño ni oscuridad)</option>
+          <option value="hard">Difícil (Vida, oscuridad, lava, gas y sismos)</option>
         </select>
       </div>
 
