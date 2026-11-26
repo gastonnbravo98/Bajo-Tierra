@@ -530,3 +530,110 @@ export function createFogOfWar() {
     },
   };
 }
+
+/**
+ * Dibuja los cofres de ruinas subterráneas en una capa PIXI.Graphics compartida.
+ */
+export function drawChests(gfx, chests, camX, camY, screenW, screenH) {
+  gfx.clear();
+  for (const c of chests) {
+    if (c.x < camX - 32 || c.x > camX + screenW + 32 || c.y < camY - 32 || c.y > camY + screenH + 32) continue;
+    const x = c.x - 8;
+    const y = c.y - 6;
+    const bodyColor = c.opened ? 0x5c432d : (c.loot.tier === 'Legendario' ? 0x8e44ad : c.loot.tier === 'Raro' ? 0x2b6cb0 : 0x9c5a25);
+    const trimColor = c.opened ? 0x7a6a58 : 0xffcf5a;
+
+    gfx.rect(x, y, 16, 12).fill(bodyColor);
+    gfx.rect(x, y, 16, 4).fill(trimColor);
+    if (!c.opened) {
+      gfx.rect(x + 6, y + 3, 4, 4).fill(0xffffff);
+    }
+  }
+}
+
+/**
+ * Dibuja los enemigos subterráneos animados (aleteo, patas, aura) y su barra de vida.
+ */
+export function drawEnemies(gfx, enemies, camX, camY, screenW, screenH, time = 0) {
+  gfx.clear();
+  for (const e of enemies) {
+    if (e.x + e.w < camX - 24 || e.x > camX + screenW + 24 || e.y + e.h < camY - 24 || e.y > camY + screenH + 24) continue;
+    const color = e.hitFlash > 0 ? 0xffffff : e.color;
+    const cx = e.x + e.w / 2;
+    const cy = e.y + e.h / 2;
+    const phase = time * 14 + e.id * 1.7;
+
+    if (e.kind === 'bat') {
+      const flap = Math.sin(phase) * (e.h * 0.45);
+      const bob = Math.cos(phase * 0.5) * 1.5;
+      // Alas batientes
+      gfx.poly([
+        cx - 2, cy + bob,
+        cx - e.w * 0.65, cy + bob - flap,
+        cx - e.w * 0.3, cy + bob + e.h * 0.25,
+      ]).fill(color);
+      gfx.poly([
+        cx + 2, cy + bob,
+        cx + e.w * 0.65, cy + bob - flap,
+        cx + e.w * 0.3, cy + bob + e.h * 0.25,
+      ]).fill(color);
+      // Cuerpo y ojos
+      gfx.circle(cx, cy + bob, e.w * 0.26).fill(color);
+      gfx.rect(cx - 3, cy + bob - 2, 2, 2).fill(0xff3b3b);
+      gfx.rect(cx + 1, cy + bob - 2, 2, 2).fill(0xff3b3b);
+    } else if (e.kind === 'wisp') {
+      const pulse = 1 + Math.sin(time * 7 + e.id) * 0.14;
+      const orbX = cx + Math.cos(time * 5 + e.id) * (e.w * 0.45);
+      const orbY = cy + Math.sin(time * 5 + e.id) * (e.h * 0.45);
+      gfx.circle(cx, cy, e.w * 0.56 * pulse).fill({ color, alpha: 0.32 });
+      gfx.circle(cx, cy, e.w * 0.4 * pulse).fill({ color, alpha: 0.9 });
+      gfx.circle(cx, cy, e.w * 0.2).fill(0xfff3b0);
+      gfx.circle(orbX, orbY, 2).fill(0xffe066);
+    } else {
+      // Escarabajo de roca con patas animadas
+      const step = Math.sin(phase * 1.1) * 2.2;
+      const legY = e.y + e.h - 2;
+      for (let i = 0; i < 3; i++) {
+        const lx = e.x + 2 + i * (e.w * 0.32);
+        const offset = (i % 2 === 0 ? step : -step);
+        gfx.moveTo(lx, legY).lineTo(lx + offset, legY + 3.5).stroke({ width: 1.5, color: 0x2b1a24 });
+      }
+      gfx.roundRect(e.x, e.y, e.w, e.h - 1, 4).fill(color);
+      gfx.roundRect(e.x + 2, e.y + 1, e.w - 4, e.h * 0.4, 2).fill({ color: 0xffffff, alpha: 0.2 });
+      gfx.rect(e.dir > 0 ? e.x + e.w - 4 : e.x + 2, e.y + 3, 2.5, 2.5).fill(0xffe066);
+    }
+
+    if (e.hp < e.maxHp) {
+      const bw = e.w + 2;
+      const pct = Math.max(0, e.hp / e.maxHp);
+      gfx.rect(e.x - 1, e.y - 6, bw, 3).fill(0x1a100a);
+      gfx.rect(e.x - 1, e.y - 6, bw * pct, 3).fill(0xff5252);
+    }
+  }
+}
+
+/**
+ * Dibuja grietas y barra de progreso sobre los bloques duros que están siendo picados.
+ */
+export function drawDigProgress(gfx, progressMap) {
+  gfx.clear();
+  for (const entry of progressMap.values()) {
+    const ratio = Math.min(1, entry.hits / entry.needed);
+    const x = entry.x * CELL;
+    const y = entry.y * CELL;
+
+    // Grietas progresivas sobre la celda
+    gfx.moveTo(x + 2, y + 2).lineTo(x + 2 + 10 * ratio, y + 2 + 9 * ratio);
+    if (ratio > 0.35) {
+      gfx.moveTo(x + CELL - 2, y + 3).lineTo(x + CELL - 2 - 9 * ratio, y + 3 + 10 * ratio);
+    }
+    if (ratio > 0.65) {
+      gfx.moveTo(x + 4, y + CELL - 3).lineTo(x + 4 + 8 * ratio, y + 4);
+    }
+    gfx.stroke({ width: 1.5, color: 0x111111, alpha: 0.85 });
+
+    // Barra de progreso compacta
+    gfx.rect(x + 1, y + CELL - 3, CELL - 2, 2).fill(0x1a100a);
+    gfx.rect(x + 1, y + CELL - 3, (CELL - 2) * ratio, 2).fill(0xffcf5a);
+  }
+}

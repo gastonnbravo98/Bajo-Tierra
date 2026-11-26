@@ -91,6 +91,13 @@ export function shapeCells(shape, cx, cy, radius, px = cx, py = cy) {
   return out;
 }
 
+export function requiredHits(type, power) {
+  const hard = HARDNESS[type] ?? 0;
+  if (hard > power) return Infinity;
+  if (hard <= 2) return 1;
+  return hard - 1;
+}
+
 export function digCells(world, delta, chunks, cells, power, onBreak) {
   let count = 0;
   let blocked = 0;
@@ -114,6 +121,53 @@ export function digCells(world, delta, chunks, cells, power, onBreak) {
   }
 
   return { count, blocked, broken };
+}
+
+export function digCellsWithProgress(world, delta, chunks, cells, power, progressMap, onBreak) {
+  let count = 0;
+  let blocked = 0;
+  let damaged = 0;
+  const broken = {};
+
+  for (const [x, y] of cells) {
+    if (!world.inBounds(x, y)) continue;
+    const type = world.get(x, y);
+    if (type === AIR || type === LAVA || type === GAS) continue;
+
+    const needed = requiredHits(type, power);
+    if (!Number.isFinite(needed)) {
+      blocked++;
+      continue;
+    }
+
+    const key = `${x},${y}`;
+    if (needed <= 1) {
+      progressMap?.delete(key);
+      setCell(world, delta, chunks, x, y, AIR);
+      count++;
+      broken[type] = (broken[type] || 0) + 1;
+      onBreak?.(x, y, type);
+      continue;
+    }
+
+    const entry = progressMap.get(key) || { x, y, hits: 0, needed, age: 0 };
+    entry.hits++;
+    entry.needed = needed;
+    entry.age = 0;
+
+    if (entry.hits >= needed) {
+      progressMap.delete(key);
+      setCell(world, delta, chunks, x, y, AIR);
+      count++;
+      broken[type] = (broken[type] || 0) + 1;
+      onBreak?.(x, y, type);
+    } else {
+      progressMap.set(key, entry);
+      damaged++;
+    }
+  }
+
+  return { count, blocked, damaged, broken };
 }
 
 export function laser(world, delta, chunks, ox, oy, dx, dy, pierce, range, power, onBreak) {

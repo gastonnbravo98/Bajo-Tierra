@@ -212,15 +212,131 @@
 
     /* ---------- HUD y panel de debug ---------- */
     #hud, #debug {
-      display: none; position: fixed; z-index: 5; padding: 7px 10px;
-      background: var(--panel); color: var(--text);
-      border: 1px solid var(--panel-border); border-radius: 6px;
-      font: 11px/1.45 monospace; pointer-events: none;
+      display: none; position: fixed; z-index: 5;
+      background: linear-gradient(180deg, rgba(42, 26, 17, 0.94) 0%, rgba(25, 15, 10, 0.94) 100%);
+      color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 207, 90, 0.14);
+      font: 11px/1.4 sans-serif; pointer-events: none;
     }
-    #hud { top: 12px; left: 12px; }
-    #hud .hud-line { white-space: nowrap; }
-    #hud .hud-msg { color: var(--gold); font-weight: bold; margin-top: 2px; }
-    #hud .hud-warn { color: #ff6b6b; font-weight: bold; margin-top: 2px; }
+    #hud { top: 12px; left: 12px; width: 256px; padding: 9px 11px; }
+    #hud .hud-top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 5px; margin-bottom: 6px;
+      border-bottom: 1px solid rgba(122, 78, 45, 0.55);
+    }
+    #hud .hud-seed { font: 700 11px monospace; color: var(--muted); }
+    #hud .hud-badge {
+      padding: 1px 6px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    }
+    #hud .hud-badge.easy { background: rgba(46, 204, 113, 0.18); color: #7ae582; border: 1px solid rgba(122, 229, 130, 0.4); }
+    #hud .hud-badge.hard { background: rgba(255, 82, 82, 0.2); color: #ff7b7b; border: 1px solid rgba(255, 107, 107, 0.45); }
+    #hud .hud-stats { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+    #hud .hud-stat { display: flex; justify-content: space-between; font-size: 11px; }
+    #hud .hud-gold { color: var(--gold); }
+
+    /* Barras gráficas de progreso */
+    #hud .bar-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    #hud .bar-lbl { width: 62px; flex-shrink: 0; font-size: 10px; color: var(--muted); font-weight: 600; }
+    #hud .bar-track {
+      position: relative; flex: 1; height: 13px;
+      background: #140b07; border: 1px solid #5c3a21; border-radius: 4px; overflow: hidden;
+    }
+    #hud .bar-fill {
+      height: 100%; transition: width 0.08s linear;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    }
+    #hud .bar-fill.depth { background: linear-gradient(90deg, #2b6cb0, #4fe3ff); }
+    #hud .bar-fill.fuel { background: linear-gradient(90deg, #e07a16, #ffcf5a); }
+    #hud .bar-fill.fuel.low { background: linear-gradient(90deg, #b82929, #ff6b35); }
+    #hud .bar-fill.hp { background: linear-gradient(90deg, #b82929, #ff5252); }
+    #hud .bar-fill.hp.low { background: linear-gradient(90deg, #7a1212, #ff2b2b); }
+    #hud .bar-fill.bag { background: linear-gradient(90deg, #2e9e4f, #7ae582); }
+    #hud .bar-fill.bag.full { background: linear-gradient(90deg, #d97724, #ffcf5a); }
+    #hud .bar-track.empty { border-color: #ff5252; animation: fuel-blink 0.65s infinite alternate; }
+    #hud .bar-val {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font: 700 9px monospace; color: #fff; text-shadow: 0 1px 2px #000;
+    }
+
+    /* Chips de minerales en mochila y tienda */
+    .ore-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+      transform: rotate(45deg); flex-shrink: 0;
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.65);
+    }
+    #hud .hud-ores { display: flex; flex-wrap: wrap; gap: 3px; margin: 5px 0 3px; }
+    #hud .hud-ore-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 1px 5px; background: rgba(20, 12, 8, 0.8);
+      border: 1px solid #5c3a21; border-radius: 4px; font-size: 10px;
+    }
+    #hud .hud-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    #hud .hud-pill {
+      padding: 2px 6px; background: rgba(74, 47, 28, 0.72);
+      border: 1px solid rgba(122, 78, 45, 0.8); border-radius: 4px;
+      font-size: 10px; color: var(--text);
+    }
+    #hud .hud-compass {
+      margin-top: 5px; padding: 3px 6px; border-radius: 4px;
+      background: rgba(79, 227, 255, 0.14); border: 1px solid rgba(79, 227, 255, 0.4);
+      color: #8ceeff; font-size: 10px; text-align: center;
+    }
+    #hud .hud-section-title {
+      margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(122, 78, 45, 0.45);
+      font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--gold);
+    }
+    #hud .hud-quests { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+    #hud .hud-quest {
+      display: flex; justify-content: space-between; gap: 6px;
+      font-size: 10px; color: #d8c3a5;
+    }
+    #hud .hud-quest.ready { color: #7ae582; font-weight: 600; }
+    #hud .hud-q-prog { font-family: monospace; flex-shrink: 0; }
+    #hud .hud-prompt {
+      margin-top: 5px; padding: 3px 6px; border-radius: 4px; text-align: center;
+      background: rgba(56, 185, 94, 0.2); border: 1px solid rgba(82, 214, 121, 0.5);
+      color: #9bf6b4; font-size: 11px;
+    }
+    #hud .hud-prompt.chest {
+      background: rgba(255, 207, 90, 0.18); border-color: rgba(255, 207, 90, 0.55); color: var(--gold);
+    }
+    #hud .hud-msg { color: var(--gold); font-weight: bold; margin-top: 4px; }
+    #hud .hud-warn { color: #ff6b6b; font-weight: bold; margin-top: 4px; }
+    @keyframes fuel-blink {
+      from { box-shadow: 0 0 0 rgba(255, 82, 82, 0); }
+      to { box-shadow: 0 0 8px rgba(255, 82, 82, 0.75); }
+    }
+
+    /* Modal de muerte y recuperación (Modo Difícil) */
+    #death-modal {
+      display: none; position: fixed; inset: 0; z-index: 9;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(20, 6, 6, 0.78); backdrop-filter: blur(3px);
+      font-family: sans-serif;
+    }
+    #death-modal .pause-box {
+      display: flex; flex-direction: column; gap: 10px; width: 340px;
+      padding: 22px; background: var(--panel); color: var(--text);
+      border: 2px solid #a83838; border-radius: 8px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.75);
+    }
+    #death-modal h2 { margin: 0; font-size: 24px; text-align: center; color: #ff6b6b; }
+    #death-modal p { margin: 0; font-size: 13px; text-align: center; color: var(--text); line-height: 1.4; }
+    #death-modal button {
+      width: 100%; padding: 10px 12px; font-size: 14px; cursor: pointer;
+      background: #4a2f1c; color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 4px;
+    }
+    #death-modal button:hover { background: #6a4326; }
+    #death-modal button.primary {
+      background: #2e9e4f; border-color: #38b95e; color: #fff; font-weight: 600;
+    }
+    #death-modal button.primary:hover { background: #38b95e; }
+    #death-modal button.danger {
+      background: #5c2323; border-color: #8a3636; color: #ffd6d6;
+    }
+    #death-modal button.danger:hover { background: #7a2e2e; }
 
     /* Indicadores visuales de vida y combustible */
     #hud .fuel-row {
@@ -307,7 +423,7 @@
       background: #4a2f1c; color: var(--text); border: 1px solid var(--panel-border); border-radius: 4px;
       font: 13px sans-serif;
     }
-    #shop button.chip { display: inline-block; width: auto; padding: 3px 7px; font-size: 12px; }
+    #shop button.chip { display: inline-flex; align-items: center; gap: 6px; width: auto; padding: 4px 8px; font-size: 12px; }
     #shop button.chip-all { display: block; flex: 1; padding: 5px 8px; font-size: 12px; text-align: center; }
     #shop button small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; line-height: 1.2; }
     #shop button strong { color: var(--gold); font-size: 12px; }
@@ -415,6 +531,16 @@
   <div id="debug"></div>
   <div id="shop"></div>
   <div id="banner"></div>
+
+  <div id="death-modal">
+    <div class="pause-box">
+      <h2>¡Caíste bajo tierra!</h2>
+      <p id="death-info"></p>
+      <button id="btn-respawn" class="primary">Reaparecer en la base cercana</button>
+      <button id="btn-death-restart">Reiniciar partida</button>
+      <button id="btn-death-exit" class="danger">Salir al menú principal</button>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.min.js"></script>
   <script type="module" src="main.js"></script>

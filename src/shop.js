@@ -1,8 +1,10 @@
 import {
   UPGRADES, DYNAMITE, OUTPOST, DIG_RADIUS, DIG_BASE_POWER, FUEL_MAX, FUEL_PER_LEVEL,
-  CARGO_BASE, CARGO_PER_LEVEL, FORTUNE_PER_LEVEL, LASER,
+  CARGO_BASE, CARGO_PER_LEVEL, FORTUNE_PER_LEVEL, LASER, COLORS,
   SHAPE_ORDER, ORE_VALUE, ORE_NAME, IS_INFINITE, IS_HARD,
 } from './config.js';
+
+const oreHex = (t) => `#${(COLORS[t] ?? 0xffffff).toString(16).padStart(6, '0')}`;
 
 export function createStats() {
   const stash = {};
@@ -104,7 +106,7 @@ export function buyItem(s, key) {
   return `Compraste ${item.label}`;
 }
 
-export function createShopPanel(el, stats, onAction, onTeleport) {
+export function createShopPanel(el, stats, onAction, onTeleport, questManager = null) {
   let open = false;
   const make = (tag, text, cls) => {
     const e = document.createElement(tag);
@@ -124,7 +126,11 @@ export function createShopPanel(el, stats, onAction, onTeleport) {
     const chips = make('div', undefined, 'shop-chips');
     for (const t of Object.keys(stats.stash)) {
       if (stats.stash[t] === 0) continue;
-      const b = make('button', `${ORE_NAME[t]} ${stats.stash[t]} ($${stats.stash[t] * ORE_VALUE[t]})`, 'chip');
+      const b = make('button', undefined, 'chip');
+      const dot = make('span', undefined, 'ore-dot');
+      dot.style.background = oreHex(t);
+      const txt = make('span', `${ORE_NAME[t]} ${stats.stash[t]} ($${stats.stash[t] * ORE_VALUE[t]})`);
+      b.append(dot, txt);
       b.addEventListener('click', () => sell(t));
       chips.append(b);
     }
@@ -163,6 +169,31 @@ export function createShopPanel(el, stats, onAction, onTeleport) {
       grid.append(b);
     });
     el.append(grid);
+
+    if (questManager) {
+      el.append(make('h3', 'Contratos / Misiones'));
+      const qGrid = make('div', undefined, 'shop-grid');
+      for (const q of questManager.getViews(stats)) {
+        const qb = make('button');
+        qb.disabled = !q.ready;
+        const badge = make('strong', q.ready ? `Reclamar (${q.rewardText})` : q.progressText);
+        if (q.ready) badge.style.color = '#7ae582';
+        qb.append(
+          make('span', q.label),
+          badge,
+          make('small', q.ready ? 'Listo para entregar' : `Recompensa: ${q.rewardText}`),
+        );
+        qb.addEventListener('click', () => {
+          const res = questManager.claim(q.id, stats);
+          if (res) {
+            onAction(`Contrato completado: +$${res.money}${res.dynamite ? ` +${res.dynamite} din.` : ''}`);
+            render();
+          }
+        });
+        qGrid.append(qb);
+      }
+      el.append(qGrid);
+    }
 
     el.append(make('p', 'Teclas 1-9 compran, 0 vende todo, G instala base, T viaja. E o Esc cierran.', 'shop-hint'));
   }
